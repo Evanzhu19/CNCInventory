@@ -1,0 +1,101 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: mills-inventory-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Please set MYSQL_ROOT_PASSWORD in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-tooling_inventory}
+      MYSQL_USER: ${MYSQL_USER:-tooling_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Please set MYSQL_PASSWORD in .env}
+      TZ: ${TZ:-America/New_York}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  db-init:
+    build:
+      context: ./backend
+    container_name: mills-inventory-db-init
+    restart: "no"
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-tooling_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-tooling_inventory}
+      BCRYPT_SALT_ROUNDS: ${BCRYPT_SALT_ROUNDS:-10}
+      SKIP_SEED: ${SKIP_SEED:-0}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_REAL_NAME: ${INITIAL_ADMIN_REAL_NAME:-系统管理员}
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: ["npm", "run", "db:init"]
+
+  backend:
+    build:
+      context: ./backend
+    container_name: mills-inventory-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql://${MYSQL_USER:-tooling_user}:${MYSQL_PASSWORD}@mysql:3306/${MYSQL_DATABASE:-tooling_inventory}
+      PORT: 4000
+      JWT_SECRET: ${JWT_SECRET:?Please set JWT_SECRET in .env}
+      CORS_ORIGIN: ${APP_PUBLIC_URL:-http://localhost:5173}
+      BCRYPT_SALT_ROUNDS: ${BCRYPT_SALT_ROUNDS:-10}
+    expose:
+      - "4000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:4000/api/health').then((response)=>process.exit(response.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: mills-inventory-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  adminer:
+    image: adminer:5
+    container_name: mills-inventory-adminer
+    restart: unless-stopped
+    profiles:
+      - tools
+    ports:
+      - "${ADMINER_BIND_ADDRESS:-127.0.0.1}:${ADMINER_PORT:-8080}:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+volumes:
+  mysql_data:

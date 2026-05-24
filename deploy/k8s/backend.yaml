@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backend-secret
+  namespace: mills-inventory
+type: Opaque
+stringData:
+  DATABASE_URL: mysql://tooling_user:tooling_password@mysql:3306/tooling_inventory
+  JWT_SECRET: change_this_to_a_long_random_secret
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backend-config
+  namespace: mills-inventory
+data:
+  PORT: "4000"
+  CORS_ORIGIN: "http://localhost:30517"
+  BCRYPT_SALT_ROUNDS: "10"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: mills-inventory
+spec:
+  selector:
+    app: backend
+  ports:
+    - name: http
+      port: 4000
+      targetPort: 4000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: mills-inventory
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      initContainers:
+        - name: db-init
+          image: mills-inventory-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["npm", "run", "db:init"]
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+      containers:
+        - name: backend
+          image: mills-inventory-backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["npm", "run", "start"]
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - secretRef:
+                name: backend-secret
+            - configMapRef:
+                name: backend-config
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 4000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 4000
+            initialDelaySeconds: 30
+            periodSeconds: 20

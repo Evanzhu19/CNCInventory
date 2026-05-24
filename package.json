@@ -1,0 +1,29 @@
+{
+  "name": "mills-inventory-system",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "db:up": "docker compose up -d mysql adminer",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f mysql",
+    "stack:up": "docker compose up --build",
+    "stack:down": "docker compose down",
+    "stack:logs": "docker compose logs -f",
+    "stack:deploy": "./scripts/compose-deploy.sh",
+    "stack:destroy": "./scripts/compose-destroy.sh",
+    "stack:fresh": "./scripts/compose-fresh-start.sh",
+    "stack:fresh:empty": "./scripts/compose-fresh-start.sh --empty",
+    "k8s:deploy": "./scripts/k8s-deploy.sh",
+    "k8s:destroy": "./scripts/k8s-destroy.sh",
+    "backend:dev": "npm --prefix backend run dev",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "test:business": "npm --prefix backend run test:business",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:debug": "playwright test --debug"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

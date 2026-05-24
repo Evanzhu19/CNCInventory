@@ -1,0 +1,629 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider     = "mysql"
+  relationMode = "foreignKeys"
+}
+
+model User {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  username     String   @unique @db.VarChar(50)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  realName     String   @map("real_name") @db.VarChar(50)
+  role         UserRole @default(CNC_SUPERVISOR)
+  status       Int      @default(1) @db.TinyInt
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  stockInsOperated    StockIn[]         @relation("StockInOperator")
+  stockOutsOperated   StockOut[]        @relation("StockOutOperator")
+  stockOutsReceived   StockOut[]        @relation("StockOutReceiver")
+  recoveryRecords     RecoveryRecord[]  @relation("RecoveryOperator")
+  lossRecords         LossRecord[]      @relation("LossOperator")
+  purchaseRequests    PurchaseRequest[] @relation("PurchaseRequestRequester")
+  purchaseLists       PurchaseList[]    @relation("PurchaseListCreator")
+  stockCountsCreated  StockCount[]      @relation("StockCountCreator")
+  stockCountsApproved StockCount[]      @relation("StockCountApprover")
+  operationLogs       OperationLog[]
+
+  @@index([role])
+  @@index([status])
+  @@map("users")
+}
+
+model Category {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name      String   @db.VarChar(100)
+  parentId  BigInt?  @map("parent_id") @db.UnsignedBigInt
+  level     Int
+  sortOrder Int      @default(0) @map("sort_order")
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  children Category[] @relation("CategoryTree")
+  items    Item[]
+
+  @@unique([parentId, name])
+  @@index([level, status])
+  @@index([sortOrder])
+  @@map("categories")
+}
+
+model Supplier {
+  id            BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name          String   @unique @db.VarChar(100)
+  contactPerson String?  @map("contact_person") @db.VarChar(50)
+  phone         String?  @db.VarChar(50)
+  channel       String?  @db.VarChar(50)
+  remark        String?  @db.Text
+  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  itemDefaults      Item[]             @relation("ItemDefaultSupplier")
+  stockIns          StockIn[]          @relation("StockInSupplier")
+  stockInItems      StockInItem[]      @relation("StockInItemSupplier")
+  purchaseListItems PurchaseListItem[] @relation("PurchaseListItemReferenceSupplier")
+
+  @@index([channel])
+  @@map("suppliers")
+}
+
+model Warehouse {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name      String   @db.VarChar(100)
+  status    Int      @default(1) @db.TinyInt
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  inventories     Inventory[]
+  stockIns        StockIn[]
+  stockOuts       StockOut[]
+  recoveryRecords RecoveryRecord[]
+  lossRecords     LossRecord[]
+  stockCounts     StockCount[]
+
+  @@map("warehouses")
+}
+
+model Item {
+  id                BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  itemCode          String           @unique @map("item_code") @db.VarChar(50)
+  name              String           @db.VarChar(100)
+  specification     String?          @db.VarChar(200)
+  brand             String?          @db.VarChar(100)
+  categoryId        BigInt           @map("category_id") @db.UnsignedBigInt
+  unit              String           @db.VarChar(20)
+  trackingMode      ItemTrackingMode @default(CLOSED_LOOP) @map("tracking_mode")
+  safeStock         Decimal          @default(0) @map("safe_stock") @db.Decimal(12, 3)
+  defaultSupplierId BigInt?          @map("default_supplier_id") @db.UnsignedBigInt
+  defaultPrice      Decimal?         @map("default_price") @db.Decimal(12, 2)
+  status            Int              @default(1) @db.TinyInt
+  remark            String?          @db.Text
+  createdAt         DateTime         @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.DateTime(0)
+
+  category             Category              @relation(fields: [categoryId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  defaultSupplier      Supplier?             @relation("ItemDefaultSupplier", fields: [defaultSupplierId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  inventories          Inventory[]
+  stockInItems         StockInItem[]
+  stockOutItems        StockOutItem[]
+  recoveryRecords      RecoveryRecord[]
+  lossRecords          LossRecord[]
+  purchaseRequestItems PurchaseRequestItem[]
+  purchaseListItems    PurchaseListItem[]
+  stockCountItems      StockCountItem[]
+
+  @@index([categoryId, status])
+  @@index([name])
+  @@index([specification])
+  @@index([brand])
+  @@map("items")
+}
+
+model Inventory {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  itemId       BigInt   @map("item_id") @db.UnsignedBigInt
+  warehouseId  BigInt   @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  availableQty Decimal  @default(0) @map("available_qty") @db.Decimal(12, 3)
+  borrowedQty  Decimal  @default(0) @map("borrowed_qty") @db.Decimal(12, 3)
+  pendingQty   Decimal  @default(0) @map("pending_qty") @db.Decimal(12, 3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  item      Item      @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([itemId, warehouseId])
+  @@index([warehouseId])
+  @@map("inventory")
+}
+
+model StockIn {
+  id             BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  inNo           String                  @unique @map("in_no") @db.VarChar(50)
+  inType         StockInType             @map("in_type")
+  status         InventoryDocumentStatus @default(CONFIRMED)
+  warehouseId    BigInt                  @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  operatorId     BigInt                  @map("operator_id") @db.UnsignedBigInt
+  supplierId     BigInt?                 @map("supplier_id") @db.UnsignedBigInt
+  purchaseListId BigInt?                 @map("purchase_list_id") @db.UnsignedBigInt
+  inTime         DateTime                @map("in_time") @db.DateTime(0)
+  totalAmount    Decimal                 @default(0) @map("total_amount") @db.Decimal(14, 2)
+  remark         String?                 @db.Text
+  createdAt      DateTime                @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt      DateTime                @updatedAt @map("updated_at") @db.DateTime(0)
+
+  warehouse    Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  operator     User          @relation("StockInOperator", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supplier     Supplier?     @relation("StockInSupplier", fields: [supplierId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  purchaseList PurchaseList? @relation(fields: [purchaseListId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items        StockInItem[]
+
+  @@index([warehouseId, inTime])
+  @@index([operatorId])
+  @@index([supplierId])
+  @@index([purchaseListId])
+  @@map("stock_in")
+}
+
+model StockInItem {
+  id                 BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  stockInId          BigInt   @map("stock_in_id") @db.UnsignedBigInt
+  itemId             BigInt   @map("item_id") @db.UnsignedBigInt
+  supplierId         BigInt?  @map("supplier_id") @db.UnsignedBigInt
+  purchaseListItemId BigInt?  @map("purchase_list_item_id") @db.UnsignedBigInt
+  qty                Decimal  @db.Decimal(12, 3)
+  availableQtyBalance Decimal @default(0) @map("available_qty_balance") @db.Decimal(12, 3)
+  borrowedQtyBalance  Decimal @default(0) @map("borrowed_qty_balance") @db.Decimal(12, 3)
+  pendingQtyBalance   Decimal @default(0) @map("pending_qty_balance") @db.Decimal(12, 3)
+  unitPrice          Decimal  @default(0) @map("unit_price") @db.Decimal(12, 2)
+  totalPrice         Decimal  @default(0) @map("total_price") @db.Decimal(14, 2)
+  purchaseChannel    String?  @map("purchase_channel") @db.VarChar(100)
+  remark             String?  @db.Text
+  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  stockIn          StockIn           @relation(fields: [stockInId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item             Item              @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  supplier         Supplier?         @relation("StockInItemSupplier", fields: [supplierId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  purchaseListItem PurchaseListItem? @relation(fields: [purchaseListItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  stockOutBatchAllocations StockOutItemBatchAllocation[]
+  recoveryBatchAllocations RecoveryBatchAllocation[]
+  lossBatchAllocations     LossBatchAllocation[]
+
+  @@index([stockInId])
+  @@index([itemId])
+  @@index([supplierId])
+  @@index([purchaseListItemId])
+  @@map("stock_in_items")
+}
+
+model StockOut {
+  id           BigInt                  @id @default(autoincrement()) @db.UnsignedBigInt
+  outNo        String                  @unique @map("out_no") @db.VarChar(50)
+  status       InventoryDocumentStatus @default(CONFIRMED)
+  warehouseId  BigInt                  @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  receiverId   BigInt?                 @map("receiver_id") @db.UnsignedBigInt
+  receiverName String                  @map("receiver_name") @db.VarChar(50)
+  department   String?                 @db.VarChar(50)
+  purpose      String?                 @db.VarChar(200)
+  operatorId   BigInt                  @map("operator_id") @db.UnsignedBigInt
+  outTime      DateTime                @map("out_time") @db.DateTime(0)
+  remark       String?                 @db.Text
+  createdAt    DateTime                @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime                @updatedAt @map("updated_at") @db.DateTime(0)
+
+  warehouse Warehouse      @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  receiver  User?          @relation("StockOutReceiver", fields: [receiverId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  operator  User           @relation("StockOutOperator", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items     StockOutItem[]
+
+  @@index([warehouseId, outTime])
+  @@index([receiverId])
+  @@index([operatorId])
+  @@map("stock_out")
+}
+
+model StockOutItem {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  stockOutId BigInt   @map("stock_out_id") @db.UnsignedBigInt
+  itemId     BigInt   @map("item_id") @db.UnsignedBigInt
+  qty        Decimal  @db.Decimal(12, 3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  stockOut        StockOut         @relation(fields: [stockOutId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item            Item             @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  recoveryRecords RecoveryRecord[]
+  lossRecords     LossRecord[]
+  batchAllocations StockOutItemBatchAllocation[]
+
+  @@index([stockOutId])
+  @@index([itemId])
+  @@map("stock_out_items")
+}
+
+model StockOutItemBatchAllocation {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  stockOutItemId BigInt @map("stock_out_item_id") @db.UnsignedBigInt
+  stockInItemId  BigInt @map("stock_in_item_id") @db.UnsignedBigInt
+  qty          Decimal  @db.Decimal(12, 3)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  stockOutItem StockOutItem @relation(fields: [stockOutItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stockInItem  StockInItem  @relation(fields: [stockInItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([stockOutItemId, stockInItemId], map: "soi_batch_alloc_uq")
+  @@index([stockInItemId], map: "soi_batch_stock_in_idx")
+  @@map("stock_out_item_batch_allocations")
+}
+
+model RecoveryRecord {
+  id                    BigInt         @id @default(autoincrement()) @db.UnsignedBigInt
+  itemId                BigInt         @map("item_id") @db.UnsignedBigInt
+  warehouseId           BigInt         @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  relatedStockOutItemId BigInt?        @map("related_stock_out_item_id") @db.UnsignedBigInt
+  qty                   Decimal        @db.Decimal(12, 3)
+  returnedBy            String         @map("returned_by") @db.VarChar(50)
+  operatorId            BigInt         @map("operator_id") @db.UnsignedBigInt
+  recoveryTime          DateTime       @map("recovery_time") @db.DateTime(0)
+  recoveryStatus        RecoveryStatus @map("recovery_status")
+  remark                String?        @db.Text
+  createdAt             DateTime       @default(now()) @map("created_at") @db.DateTime(0)
+
+  item                Item          @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  warehouse           Warehouse     @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  relatedStockOutItem StockOutItem? @relation(fields: [relatedStockOutItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  operator            User          @relation("RecoveryOperator", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  lossRecords         LossRecord[]
+  batchAllocations    RecoveryBatchAllocation[]
+
+  @@index([itemId, recoveryTime])
+  @@index([warehouseId])
+  @@index([relatedStockOutItemId])
+  @@index([operatorId])
+  @@map("recovery_records")
+}
+
+model RecoveryBatchAllocation {
+  id             BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  recoveryRecordId BigInt @map("recovery_record_id") @db.UnsignedBigInt
+  stockInItemId    BigInt @map("stock_in_item_id") @db.UnsignedBigInt
+  qty            Decimal  @db.Decimal(12, 3)
+  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  recoveryRecord RecoveryRecord @relation(fields: [recoveryRecordId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stockInItem    StockInItem    @relation(fields: [stockInItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([recoveryRecordId, stockInItemId], map: "recovery_batch_alloc_uq")
+  @@index([stockInItemId], map: "recovery_batch_stock_in_idx")
+  @@map("recovery_batch_allocations")
+}
+
+model LossRecord {
+  id                    BigInt          @id @default(autoincrement()) @db.UnsignedBigInt
+  itemId                BigInt          @map("item_id") @db.UnsignedBigInt
+  warehouseId           BigInt          @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  qty                   Decimal         @db.Decimal(12, 3)
+  lossType              LossType        @map("loss_type")
+  sourceBucket          InventoryBucket @map("source_bucket")
+  relatedStockOutItemId BigInt?         @map("related_stock_out_item_id") @db.UnsignedBigInt
+  relatedRecoveryId     BigInt?         @map("related_recovery_id") @db.UnsignedBigInt
+  responsiblePerson     String?         @map("responsible_person") @db.VarChar(50)
+  operatorId            BigInt          @map("operator_id") @db.UnsignedBigInt
+  recordTime            DateTime        @map("record_time") @db.DateTime(0)
+  remark                String?         @db.Text
+  createdAt             DateTime        @default(now()) @map("created_at") @db.DateTime(0)
+
+  item                Item            @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  warehouse           Warehouse       @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  relatedStockOutItem StockOutItem?   @relation(fields: [relatedStockOutItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  relatedRecovery     RecoveryRecord? @relation(fields: [relatedRecoveryId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  operator            User            @relation("LossOperator", fields: [operatorId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  batchAllocations    LossBatchAllocation[]
+
+  @@index([itemId, recordTime])
+  @@index([warehouseId])
+  @@index([relatedStockOutItemId])
+  @@index([relatedRecoveryId])
+  @@index([operatorId])
+  @@map("loss_records")
+}
+
+model LossBatchAllocation {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  lossRecordId BigInt @map("loss_record_id") @db.UnsignedBigInt
+  stockInItemId BigInt @map("stock_in_item_id") @db.UnsignedBigInt
+  qty        Decimal  @db.Decimal(12, 3)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  lossRecord LossRecord  @relation(fields: [lossRecordId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  stockInItem StockInItem @relation(fields: [stockInItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([lossRecordId, stockInItemId], map: "loss_batch_alloc_uq")
+  @@index([stockInItemId], map: "loss_batch_stock_in_idx")
+  @@map("loss_batch_allocations")
+}
+
+model PurchaseRequest {
+  id          BigInt                @id @default(autoincrement()) @db.UnsignedBigInt
+  requestNo   String                @unique @map("request_no") @db.VarChar(50)
+  requesterId BigInt                @map("requester_id") @db.UnsignedBigInt
+  status      PurchaseRequestStatus @default(PENDING)
+  priority    PurchasePriority      @default(MEDIUM)
+  requestTime DateTime              @map("request_time") @db.DateTime(0)
+  remark      String?               @db.Text
+  createdAt   DateTime              @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt   DateTime              @updatedAt @map("updated_at") @db.DateTime(0)
+
+  requester User                  @relation("PurchaseRequestRequester", fields: [requesterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items     PurchaseRequestItem[]
+
+  @@index([requesterId, requestTime])
+  @@index([status, priority])
+  @@map("purchase_requests")
+}
+
+model PurchaseRequestItem {
+  id                     BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  purchaseRequestId      BigInt   @map("purchase_request_id") @db.UnsignedBigInt
+  itemId                 BigInt?  @map("item_id") @db.UnsignedBigInt
+  requestedName          String   @map("requested_name") @db.VarChar(100)
+  requestedSpecification String?  @map("requested_specification") @db.VarChar(200)
+  requestedBrand         String?  @map("requested_brand") @db.VarChar(100)
+  requestedUnit          String?  @map("requested_unit") @db.VarChar(20)
+  requestedQty           Decimal  @map("requested_qty") @db.Decimal(12, 3)
+  reason                 String?  @db.VarChar(255)
+  createdAt              DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  purchaseRequest   PurchaseRequest           @relation(fields: [purchaseRequestId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item              Item?                     @relation(fields: [itemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  purchaseListLinks PurchaseListRequestItem[]
+
+  @@index([purchaseRequestId])
+  @@index([itemId])
+  @@map("purchase_request_items")
+}
+
+model PurchaseList {
+  id        BigInt             @id @default(autoincrement()) @db.UnsignedBigInt
+  listNo    String             @unique @map("list_no") @db.VarChar(50)
+  status    PurchaseListStatus @default(PENDING)
+  createdBy BigInt             @map("created_by") @db.UnsignedBigInt
+  remark    String?            @db.Text
+  createdAt DateTime           @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt DateTime           @updatedAt @map("updated_at") @db.DateTime(0)
+
+  creator  User               @relation("PurchaseListCreator", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items    PurchaseListItem[]
+  stockIns StockIn[]
+
+  @@index([createdBy])
+  @@index([status])
+  @@map("purchase_lists")
+}
+
+model PurchaseListItem {
+  id                  BigInt                 @id @default(autoincrement()) @db.UnsignedBigInt
+  purchaseListId      BigInt                 @map("purchase_list_id") @db.UnsignedBigInt
+  itemId              BigInt?                @map("item_id") @db.UnsignedBigInt
+  itemName            String                 @map("item_name") @db.VarChar(100)
+  specification       String?                @db.VarChar(200)
+  brand               String?                @db.VarChar(100)
+  unit                String?                @db.VarChar(20)
+  qty                 Decimal                @db.Decimal(12, 3)
+  referencePrice      Decimal?               @map("reference_price") @db.Decimal(12, 2)
+  referenceSupplierId BigInt?                @map("reference_supplier_id") @db.UnsignedBigInt
+  status              PurchaseListItemStatus @default(PENDING)
+  remark              String?                @db.Text
+  createdAt           DateTime               @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt           DateTime               @updatedAt @map("updated_at") @db.DateTime(0)
+
+  purchaseList      PurchaseList              @relation(fields: [purchaseListId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item              Item?                     @relation(fields: [itemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  referenceSupplier Supplier?                 @relation("PurchaseListItemReferenceSupplier", fields: [referenceSupplierId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  requestItemLinks  PurchaseListRequestItem[]
+  stockInItems      StockInItem[]
+
+  @@index([purchaseListId])
+  @@index([itemId])
+  @@index([referenceSupplierId])
+  @@index([status])
+  @@map("purchase_list_items")
+}
+
+model PurchaseListRequestItem {
+  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  purchaseListItemId    BigInt   @map("purchase_list_item_id") @db.UnsignedBigInt
+  purchaseRequestItemId BigInt   @map("purchase_request_item_id") @db.UnsignedBigInt
+  qty                   Decimal  @db.Decimal(12, 3)
+  createdAt             DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  purchaseListItem    PurchaseListItem    @relation(fields: [purchaseListItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  purchaseRequestItem PurchaseRequestItem @relation(fields: [purchaseRequestItemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([purchaseListItemId, purchaseRequestItemId])
+  @@index([purchaseRequestItemId])
+  @@map("purchase_list_request_items")
+}
+
+model StockCount {
+  id           BigInt           @id @default(autoincrement()) @db.UnsignedBigInt
+  countNo      String           @unique @map("count_no") @db.VarChar(50)
+  warehouseId  BigInt           @default(1) @map("warehouse_id") @db.UnsignedBigInt
+  countYear    Int?             @map("count_year")
+  status       StockCountStatus @default(DRAFT)
+  createdById  BigInt           @map("created_by_id") @db.UnsignedBigInt
+  approvedById BigInt?          @map("approved_by_id") @db.UnsignedBigInt
+  countTime    DateTime         @map("count_time") @db.DateTime(0)
+  approvedAt   DateTime?        @map("approved_at") @db.DateTime(0)
+  remark       String?          @db.Text
+  createdAt    DateTime         @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.DateTime(0)
+
+  warehouse  Warehouse        @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy  User             @relation("StockCountCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  approvedBy User?            @relation("StockCountApprover", fields: [approvedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items      StockCountItem[]
+
+  @@index([warehouseId, countTime])
+  @@index([countYear])
+  @@index([status])
+  @@index([createdById])
+  @@index([approvedById])
+  @@map("stock_counts")
+}
+
+model StockCountItem {
+  id                 BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  stockCountId       BigInt   @map("stock_count_id") @db.UnsignedBigInt
+  itemId             BigInt   @map("item_id") @db.UnsignedBigInt
+  systemAvailableQty Decimal  @default(0) @map("system_available_qty") @db.Decimal(12, 3)
+  systemBorrowedQty  Decimal  @default(0) @map("system_borrowed_qty") @db.Decimal(12, 3)
+  systemPendingQty   Decimal  @default(0) @map("system_pending_qty") @db.Decimal(12, 3)
+  actualAvailableQty Decimal  @default(0) @map("actual_available_qty") @db.Decimal(12, 3)
+  actualBorrowedQty  Decimal  @default(0) @map("actual_borrowed_qty") @db.Decimal(12, 3)
+  actualPendingQty   Decimal  @default(0) @map("actual_pending_qty") @db.Decimal(12, 3)
+  availableDiffQty   Decimal  @default(0) @map("available_diff_qty") @db.Decimal(12, 3)
+  borrowedDiffQty    Decimal  @default(0) @map("borrowed_diff_qty") @db.Decimal(12, 3)
+  pendingDiffQty     Decimal  @default(0) @map("pending_diff_qty") @db.Decimal(12, 3)
+  explanation        String?  @db.VarChar(255)
+  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  stockCount StockCount @relation(fields: [stockCountId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  item       Item       @relation(fields: [itemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([stockCountId, itemId])
+  @@index([itemId])
+  @@map("stock_count_items")
+}
+
+model OperationLog {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  userId      BigInt?  @map("user_id") @db.UnsignedBigInt
+  module      String   @db.VarChar(50)
+  action      String   @db.VarChar(50)
+  targetTable String?  @map("target_table") @db.VarChar(50)
+  targetId    BigInt?  @map("target_id") @db.UnsignedBigInt
+  detail      Json?
+  ipAddress   String?  @map("ip_address") @db.VarChar(45)
+  userAgent   String?  @map("user_agent") @db.VarChar(255)
+  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(0)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([module, action])
+  @@index([targetTable, targetId])
+  @@map("operation_logs")
+}
+
+enum UserRole {
+  ADMIN               @map("admin")
+  CNC_SUPERVISOR      @map("cnc_supervisor")
+  PROCUREMENT_MANAGER @map("procurement_manager")
+  GENERAL_MANAGER     @map("general_manager")
+
+  @@map("user_role")
+}
+
+enum ItemTrackingMode {
+  CLOSED_LOOP @map("closed_loop")
+  CONSUMABLE  @map("consumable")
+
+  @@map("item_tracking_mode")
+}
+
+enum StockInType {
+  PURCHASE        @map("purchase")
+  OPENING_BALANCE @map("opening_balance")
+  RETURNED        @map("returned")
+  ADJUSTMENT      @map("adjustment")
+  OTHER           @map("other")
+
+  @@map("stock_in_type")
+}
+
+enum InventoryDocumentStatus {
+  DRAFT     @map("draft")
+  CONFIRMED @map("confirmed")
+  VOIDED    @map("voided")
+
+  @@map("inventory_document_status")
+}
+
+enum RecoveryStatus {
+  REUSABLE           @map("reusable")
+  ROUGHING_REUSABLE  @map("roughing_reusable")
+  PENDING_INSPECTION @map("pending_inspection")
+  REPAIRABLE         @map("repairable")
+  SCRAPPED           @map("scrapped")
+
+  @@map("recovery_status")
+}
+
+enum LossType {
+  NORMAL_WEAR @map("normal_wear")
+  BROKEN      @map("broken")
+  SCRAPPED    @map("scrapped")
+  LOST        @map("lost")
+  OTHER       @map("other")
+
+  @@map("loss_type")
+}
+
+enum InventoryBucket {
+  AVAILABLE @map("available")
+  BORROWED  @map("borrowed")
+  PENDING   @map("pending")
+
+  @@map("inventory_bucket")
+}
+
+enum PurchaseRequestStatus {
+  PENDING   @map("pending")
+  MERGED    @map("merged")
+  PURCHASED @map("purchased")
+  CANCELLED @map("cancelled")
+
+  @@map("purchase_request_status")
+}
+
+enum PurchasePriority {
+  LOW    @map("low")
+  MEDIUM @map("medium")
+  HIGH   @map("high")
+  URGENT @map("urgent")
+
+  @@map("purchase_priority")
+}
+
+enum PurchaseListStatus {
+  PENDING    @map("pending")
+  PURCHASING @map("purchasing")
+  ARRIVED    @map("arrived")
+  COMPLETED  @map("completed")
+  CANCELLED  @map("cancelled")
+
+  @@map("purchase_list_status")
+}
+
+enum PurchaseListItemStatus {
+  PENDING    @map("pending")
+  ORDERED    @map("ordered")
+  ARRIVED    @map("arrived")
+  STOCKED_IN @map("stocked_in")
+  CANCELLED  @map("cancelled")
+
+  @@map("purchase_list_item_status")
+}
+
+enum StockCountStatus {
+  DRAFT     @map("draft")
+  CONFIRMED @map("confirmed")
+  VOIDED    @map("voided")
+
+  @@map("stock_count_status")
+}

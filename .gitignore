@@ -1,0 +1,15 @@
+.DS_Store
+node_modules
+dist
+coverage
+.env.local
+.env
+.env.*.local
+*.log
+*.tsbuildinfo
+backend/src/generated
+backend/prisma/migrations/dev.db
+frontend/dist
+frontend/vite.config.d.ts
+frontend/vite.config.js
+migration-bundles
