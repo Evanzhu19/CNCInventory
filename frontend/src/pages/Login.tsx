@@ -20,7 +20,7 @@ export default function LoginPage({ onLogin, onError }: LoginPageProps) {
           onFinish={async (values) => {
             try {
               const res = await api.post("/auth/login", values);
-              localStorage.setItem("token", res.data.token);
+              sessionStorage.setItem("token", res.data.token);
               onLogin(res.data.user);
             } catch (error) {
               onError(error);

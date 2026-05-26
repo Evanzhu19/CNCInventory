@@ -19,7 +19,7 @@ const supplierInputSchema = z.object({
 
 const stockInItemSchema = z.object({
   itemId: z.string().min(1),
-  qty: z.coerce.number().positive(),
+  qty: z.coerce.number().int().positive(),
   unitPrice: z.coerce.number().min(0).default(0),
   purchaseChannel: z.string().max(100).optional().nullable(),
   remark: z.string().optional().nullable(),
@@ -67,10 +67,21 @@ function nullableText(value?: string | null) {
   return normalized ? normalized : null;
 }
 
-router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (_req, res, next) => {
+const dateRangeSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
   try {
+    const { startDate, endDate } = dateRangeSchema.parse(req.query);
     const data = await prisma.stockIn.findMany({
-      take: 100,
+      where: {
+        inTime: {
+          ...(startDate ? { gte: new Date(`${startDate}T00:00:00.000`) } : {}),
+          ...(endDate ? { lte: new Date(`${endDate}T23:59:59.999`) } : {}),
+        },
+      },
       orderBy: { inTime: "desc" },
       include: {
         supplier: true,

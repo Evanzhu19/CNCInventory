@@ -15,6 +15,9 @@ import itemsRouter from "./routes/items.js";
 import lossesRouter from "./routes/losses.js";
 import purchaseListsRouter from "./routes/purchaseLists.js";
 import purchaseRequestsRouter from "./routes/purchaseRequests.js";
+import stockCountsRouter from "./routes/stockCounts.js";
+import operationLogsRouter from "./routes/operationLogs.js";
+import deleteRequestsRouter from "./routes/deleteRequests.js";
 import recoveriesRouter from "./routes/recoveries.js";
 import stockInRouter from "./routes/stockIn.js";
 import stockOutRouter from "./routes/stockOut.js";
@@ -50,6 +53,9 @@ export function createApp() {
   app.use("/api/losses", lossesRouter);
   app.use("/api/purchase-requests", purchaseRequestsRouter);
   app.use("/api/purchase-lists", purchaseListsRouter);
+  app.use("/api/stock-counts", stockCountsRouter);
+  app.use("/api/operation-logs", operationLogsRouter);
+  app.use("/api/delete-requests", deleteRequestsRouter);
 
   app.use(notFound);
   app.use(errorHandler);

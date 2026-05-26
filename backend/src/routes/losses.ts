@@ -12,7 +12,7 @@ const router = Router();
 
 const lossSchema = z.object({
   itemId: z.string().min(1),
-  qty: z.coerce.number().positive(),
+  qty: z.coerce.number().int().positive(),
   lossType: z.nativeEnum(LossType),
   sourceBucket: z.nativeEnum(InventoryBucket),
   relatedStockOutItemId: z.string().optional().nullable(),
@@ -22,10 +22,21 @@ const lossSchema = z.object({
   remark: z.string().optional().nullable(),
 });
 
-router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (_req, res, next) => {
+const dateRangeSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
   try {
+    const { startDate, endDate } = dateRangeSchema.parse(req.query);
     const data = await prisma.lossRecord.findMany({
-      take: 100,
+      where: {
+        recordTime: {
+          ...(startDate ? { gte: new Date(`${startDate}T00:00:00.000`) } : {}),
+          ...(endDate ? { lte: new Date(`${endDate}T23:59:59.999`) } : {}),
+        },
+      },
       orderBy: { recordTime: "desc" },
       include: {
         item: true,

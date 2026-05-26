@@ -21,7 +21,7 @@ const stockOutSchema = z.object({
     .array(
       z.object({
         itemId: z.string().min(1),
-        qty: z.coerce.number().positive(),
+        qty: z.coerce.number().int().positive(),
       }),
     )
     .min(1),
@@ -31,10 +31,37 @@ const stockOutSchema = z.object({
   }
 });
 
-router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (_req, res, next) => {
+router.get("/my", async (req, res, next) => {
   try {
     const data = await prisma.stockOut.findMany({
-      take: 100,
+      take: 200,
+      where: { receiverId: req.user!.id },
+      orderBy: { outTime: "desc" },
+      include: {
+        items: { include: { item: { select: { id: true, itemCode: true, name: true, specification: true, unit: true } } } },
+      },
+    });
+    res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const dateRangeSchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+});
+
+router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
+  try {
+    const { startDate, endDate } = dateRangeSchema.parse(req.query);
+    const data = await prisma.stockOut.findMany({
+      where: {
+        outTime: {
+          ...(startDate ? { gte: new Date(`${startDate}T00:00:00.000`) } : {}),
+          ...(endDate ? { lte: new Date(`${endDate}T23:59:59.999`) } : {}),
+        },
+      },
       orderBy: { outTime: "desc" },
       include: {
         operator: { select: { id: true, realName: true } },
@@ -56,7 +83,7 @@ router.post("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, nex
     const outNo = `OUT-${Date.now()}`;
 
     const stockOut = await prisma.$transaction(async (tx) => {
-      const itemQueues = new Map<string, Array<{ itemId: bigint; qty: number; trackingMode: "CLOSED_LOOP" | "CONSUMABLE" }>>();
+      const itemQueues = new Map<string, Array<{ itemId: bigint; qty: number; trackingMode: import("../generated/prisma/enums.js").ItemTrackingMode }>>();
 
       for (const item of data.items) {
         const dbItem = await tx.item.findUnique({
@@ -150,6 +177,21 @@ router.delete("/:id", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res
 
       if (!stockOut) {
         throw new Error("出库单不存在");
+      }
+
+      // Validate CLOSED_LOOP items: check borrowedQtyBalance still covers the full allocation
+      // (if items were recovered after stock-out, borrowedQtyBalance is reduced and we can't safely reverse)
+      for (const outItem of stockOut.items) {
+        if (outItem.item.trackingMode !== "CLOSED_LOOP") continue;
+        for (const allocation of outItem.batchAllocations) {
+          const stockInItem = await tx.stockInItem.findUnique({
+            where: { id: allocation.stockInItemId },
+            select: { borrowedQtyBalance: true },
+          });
+          if (!stockInItem || toNumber(stockInItem.borrowedQtyBalance) < toNumber(allocation.qty) - 0.0001) {
+            throw new Error("该出库单中的物品已有回收或损耗记录，无法直接删除。请先删除相关回收/损耗记录。");
+          }
+        }
       }
 
       for (const outItem of stockOut.items) {

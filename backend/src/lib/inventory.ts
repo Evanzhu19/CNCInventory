@@ -48,6 +48,7 @@ export async function applyStockOut(
     data: {
       availableQty: { decrement: qty },
       borrowedQty: trackingMode === ItemTrackingMode.CLOSED_LOOP ? { increment: qty } : undefined,
+      pendingQty: trackingMode === ItemTrackingMode.REPAIR_PENDING ? { increment: qty } : undefined,
     },
   });
 }

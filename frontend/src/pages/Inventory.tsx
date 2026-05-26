@@ -1,6 +1,8 @@
 import { AutoComplete, Button, Drawer, Form, Input, InputNumber, Modal, Select, Table, Tag, message } from "antd";
+import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import { api, getErrorMessage } from "../api/client";
+import { exportToExcel } from "../lib/excel";
 import ItemPriceHistory from "../components/ItemPriceHistory";
 import { isProcurementManager } from "../lib/roles";
 import type { Category, InventoryRow, ItemDetail, Supplier, User } from "../types";
@@ -29,7 +31,7 @@ type ItemEditValues = {
   brand?: string;
   categoryId: string;
   unit: string;
-  trackingMode: "CLOSED_LOOP" | "CONSUMABLE";
+  trackingMode: "CLOSED_LOOP" | "CONSUMABLE" | "HIGH_VALUE_CONSUMABLE" | "REPAIR_PENDING";
   safeStock: number;
   defaultSupplierName?: string;
   remark?: string;
@@ -40,8 +42,10 @@ export default function InventoryPage({ user }: InventoryPageProps) {
   const [messageApi, contextHolder] = message.useMessage();
   const [rows, setRows] = useState<InventoryRow[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [allCategoryIds, setAllCategoryIds] = useState<Set<string>>(new Set());
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [search, setSearch] = useState("");
+  const [filterCategoryId, setFilterCategoryId] = useState<string | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [detail, setDetail] = useState<ItemDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -58,16 +62,27 @@ export default function InventoryPage({ user }: InventoryPageProps) {
     label: supplier.channel ? `${supplier.name} / ${supplier.channel}` : supplier.name,
   }));
 
-  async function load() {
+  async function load(overrideCategory?: string | null) {
     try {
+      const catId = overrideCategory !== undefined ? overrideCategory : filterCategoryId;
+      const params: Record<string, string> = {};
+      if (search.trim()) params.search = search.trim();
+      if (catId) params.categoryId = catId;
+
       const [inventoryRes, categoriesRes, suppliersRes] = await Promise.all([
-        api.get("/inventory/list", { params: { search } }),
+        api.get("/inventory/list", { params }),
         api.get("/categories"),
         api.get("/suppliers"),
       ]);
-      setRows(inventoryRes.data.data);
+      const newRows: InventoryRow[] = inventoryRes.data.data;
+      setRows(newRows);
       setCategories(categoriesRes.data.data);
       setSuppliers(suppliersRes.data.data);
+
+      // 首次加载（无筛选）时记录全量有库存的小类 ID，用于筛选器选项
+      if (!catId && !params.search) {
+        setAllCategoryIds(new Set(newRows.map((r) => r.item.category?.id).filter(Boolean) as string[]));
+      }
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
@@ -163,6 +178,20 @@ export default function InventoryPage({ user }: InventoryPageProps) {
     }
   }
 
+  // 始终用首次全量加载的 ID 集合，筛选后也不变
+  const activeCategoryOptions = categories
+    .filter((c) => c.level === 2 && allCategoryIds.has(c.id))
+    .map((c) => ({ value: c.id, label: c.name }));
+
+  // 编辑物品时小类分组选项（可搜索）
+  const rootCategories = categories.filter((c) => c.level === 1);
+  const categorySelectOptions = rootCategories.map((root) => ({
+    label: root.name,
+    options: categories
+      .filter((c) => c.level === 2 && c.parentId === root.id)
+      .map((c) => ({ value: c.id, label: c.name })),
+  }));
+
   return (
     <>
       {contextHolder}
@@ -176,7 +205,45 @@ export default function InventoryPage({ user }: InventoryPageProps) {
           onChange={(event) => setSearch(event.target.value)}
           onSearch={() => void load()}
         />
+        <Select
+          allowClear
+          placeholder="按小类筛选"
+          style={{ width: 160 }}
+          options={activeCategoryOptions}
+          value={filterCategoryId}
+          onChange={(value) => {
+            const next = value ?? null;
+            setFilterCategoryId(next);
+            void load(next);
+          }}
+        />
         <Button onClick={() => void load()}>刷新</Button>
+        <Button
+          onClick={() => {
+            exportToExcel(
+              [
+                {
+                  name: "库存",
+                  rows: rows.map((r) => ({
+                    编码: r.item.itemCode,
+                    名称: r.item.name,
+                    规格: r.item.specification ?? "",
+                    品牌: r.item.brand ?? "",
+                    分类: r.item.category?.name ?? "",
+                    可用: Number(r.availableQty),
+                    在外: Number(r.borrowedQty),
+                    待处理: Number(r.pendingQty),
+                    安全库存: Number(r.item.safeStock),
+                    状态: r.status === "out_of_stock" ? "缺货" : r.status === "low_stock" ? "低库存" : "正常",
+                  })),
+                },
+              ],
+              `库存_${dayjs().format("YYYYMMDD_HHmm")}.xlsx`,
+            );
+          }}
+        >
+          导出 Excel
+        </Button>
       </div>
       <Table
         rowKey="id"
@@ -276,7 +343,8 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             <InputNumber
               addonBefore="可用"
               min={0}
-              precision={3}
+              precision={0}
+              step={1}
               style={{ width: "100%" }}
               value={adjustmentDraft.availableQty}
               onChange={(value) =>
@@ -286,7 +354,8 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             <InputNumber
               addonBefore="在外"
               min={0}
-              precision={3}
+              precision={0}
+              step={1}
               style={{ width: "100%" }}
               value={adjustmentDraft.borrowedQty}
               onChange={(value) =>
@@ -296,7 +365,8 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             <InputNumber
               addonBefore="待处理"
               min={0}
-              precision={3}
+              precision={0}
+              step={1}
               style={{ width: "100%" }}
               value={adjustmentDraft.pendingQty}
               onChange={(value) =>
@@ -338,9 +408,10 @@ export default function InventoryPage({ user }: InventoryPageProps) {
             </Form.Item>
             <Form.Item label="小类" name="categoryId" rules={[{ required: true, message: "请选择小类" }]}>
               <Select
-                options={categories
-                  .filter((category) => category.level === 2)
-                  .map((category) => ({ value: category.id, label: category.name }))}
+                showSearch
+                placeholder="输入或选择小类"
+                optionFilterProp="label"
+                options={categorySelectOptions}
               />
             </Form.Item>
             <Form.Item label="单位" name="unit" rules={[{ required: true, message: "请输入单位" }]}>
@@ -351,11 +422,13 @@ export default function InventoryPage({ user }: InventoryPageProps) {
                 options={[
                   { value: "CLOSED_LOOP", label: "闭环刀具" },
                   { value: "CONSUMABLE", label: "普通消耗品" },
+                  { value: "HIGH_VALUE_CONSUMABLE", label: "高值消耗品" },
+                  { value: "REPAIR_PENDING", label: "待修/寄修件" },
                 ]}
               />
             </Form.Item>
             <Form.Item label="安全库存" name="safeStock">
-              <InputNumber min={0} precision={3} style={{ width: "100%" }} />
+              <InputNumber min={0} precision={0} step={1} style={{ width: "100%" }} />
             </Form.Item>
             <Form.Item label="默认供应商" name="defaultSupplierName">
               <AutoComplete

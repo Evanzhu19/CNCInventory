@@ -63,7 +63,7 @@ const purchaseListStockInSchema = supplierInputSchema
       .array(
         z.object({
           purchaseListItemId: z.string().min(1),
-          qty: z.coerce.number().positive(),
+          qty: z.coerce.number().int().positive(),
           unitPrice: z.coerce.number().min(0).optional().nullable(),
           purchaseChannel: z.string().max(100).optional().nullable(),
           remark: z.string().optional().nullable(),
@@ -283,13 +283,50 @@ function purchaseListInclude() {
   };
 }
 
-router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (_req, res, next) => {
+router.get("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
   try {
-    const data = await prisma.purchaseList.findMany({
-      take: 100,
-      orderBy: { createdAt: "desc" },
-      include: purchaseListInclude(),
+    const listDateSchema = z.object({
+      startDate: z.string().optional(),
+      endDate: z.string().optional(),
     });
+    const { startDate, endDate } = listDateSchema.parse(req.query);
+    const [lists, cancelRequests] = await Promise.all([
+      prisma.purchaseList.findMany({
+        where: startDate || endDate ? {
+          createdAt: {
+            ...(startDate ? { gte: new Date(`${startDate}T00:00:00.000`) } : {}),
+            ...(endDate ? { lte: new Date(`${endDate}T23:59:59.999`) } : {}),
+          },
+        } : undefined,
+        orderBy: { createdAt: "desc" },
+        include: purchaseListInclude(),
+      }),
+      prisma.deleteRequest.findMany({
+        where: { targetType: "purchase_list" },
+        orderBy: { requestTime: "desc" },
+        select: {
+          id: true,
+          targetId: true,
+          status: true,
+          requestTime: true,
+          reviewedAt: true,
+          reviewNote: true,
+          reviewer: { select: { id: true, realName: true } },
+        },
+      }),
+    ]);
+
+    // Keep the most recent cancel request per list (already ordered by requestTime desc)
+    const cancelRequestMap = new Map<string, typeof cancelRequests[0]>();
+    for (const cr of cancelRequests) {
+      const key = cr.targetId.toString();
+      if (!cancelRequestMap.has(key)) cancelRequestMap.set(key, cr);
+    }
+
+    const data = lists.map((list) => ({
+      ...list,
+      cancelRequest: cancelRequestMap.get(list.id.toString()) ?? null,
+    }));
 
     res.json({ data });
   } catch (error) {
@@ -705,6 +742,144 @@ router.post("/:id/stock-in", requireRole(UserRole.PROCUREMENT_MANAGER), async (r
     });
 
     res.status(201).json({ data: stockIn });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.delete("/:id", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
+  try {
+    const purchaseListId = toBigIntId(String(req.params.id));
+
+    const list = await prisma.purchaseList.findUnique({
+      where: { id: purchaseListId },
+      include: {
+        items: {
+          select: {
+            id: true,
+            status: true,
+            requestItemLinks: {
+              select: { purchaseRequestItem: { select: { purchaseRequestId: true } } },
+            },
+          },
+        },
+      },
+    });
+
+    if (!list) {
+      res.status(404).json({ message: "采购清单不存在" });
+      return;
+    }
+
+    if (list.status === "CANCELLED") {
+      res.status(400).json({ message: "采购清单已取消" });
+      return;
+    }
+
+    if (list.status === "PENDING") {
+      // PENDING: PM can cancel directly
+      await prisma.$transaction(async (tx) => {
+        const requestIds = new Set<bigint>();
+        for (const item of list.items) {
+          for (const link of item.requestItemLinks) {
+            requestIds.add(link.purchaseRequestItem.purchaseRequestId);
+          }
+        }
+
+        await tx.purchaseListItem.updateMany({
+          where: { purchaseListId },
+          data: { status: "CANCELLED" },
+        });
+        await tx.purchaseList.update({
+          where: { id: purchaseListId },
+          data: { status: "CANCELLED" },
+        });
+        // Remove junction rows so linked PRs can be deleted or re-merged later
+        await tx.purchaseListRequestItem.deleteMany({
+          where: { purchaseListItemId: { in: list.items.map((item) => item.id) } },
+        });
+        if (requestIds.size > 0) {
+          await tx.purchaseRequest.updateMany({
+            where: { id: { in: Array.from(requestIds) }, status: "MERGED" },
+            data: { status: "PENDING" },
+          });
+          await tx.purchaseRequest.updateMany({
+            where: { id: { in: Array.from(requestIds) }, status: "PURCHASED" },
+            data: { status: "CANCELLED" },
+          });
+        }
+        await writeOperationLog(tx, req.user?.id, "purchase_list", "cancel", "purchase_lists", purchaseListId, {
+          listNo: list.listNo,
+          reason: "直接取消（待处理状态）",
+        });
+      });
+
+      res.json({ message: "采购清单已取消" });
+      return;
+    }
+
+    // PURCHASING / ARRIVED / COMPLETED: requires GM approval
+    const existing = await prisma.deleteRequest.findFirst({
+      where: { targetType: "purchase_list", targetId: purchaseListId, status: "PENDING" },
+    });
+    if (existing) {
+      res.status(409).json({ message: "已有待审批的取消申请，请等待总经理审批" });
+      return;
+    }
+
+    await prisma.deleteRequest.create({
+      data: {
+        targetType: "purchase_list",
+        targetId: purchaseListId,
+        targetDesc: {
+          listNo: list.listNo,
+          status: list.status,
+          itemCount: list.items.length,
+        },
+        requestedBy: req.user!.id,
+      },
+    });
+
+    res.json({ message: "取消申请已提交，请等待总经理审批后执行" });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.post("/:id/mark-ordered", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
+  try {
+    const purchaseListId = toBigIntId(String(req.params.id));
+
+    await prisma.$transaction(async (tx) => {
+      const list = await tx.purchaseList.findUnique({
+        where: { id: purchaseListId },
+        include: { items: { select: { id: true, status: true } } },
+      });
+      if (!list) {
+        throw new Error("采购清单不存在");
+      }
+
+      const pendingIds = list.items
+        .filter((item) => item.status === "PENDING")
+        .map((item) => item.id);
+
+      if (pendingIds.length === 0) {
+        return;
+      }
+
+      await tx.purchaseListItem.updateMany({
+        where: { id: { in: pendingIds } },
+        data: { status: "ORDERED" },
+      });
+
+      await syncPurchaseListStatus(tx, purchaseListId);
+
+      await writeOperationLog(tx, req.user?.id, "purchase_list", "mark_ordered", "purchase_lists", purchaseListId, {
+        itemCount: pendingIds.length,
+      });
+    });
+
+    res.json({ message: "已标记为已下单" });
   } catch (error) {
     next(error);
   }

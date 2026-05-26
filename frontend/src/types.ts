@@ -26,6 +26,11 @@ export type Supplier = {
   id: string;
   name: string;
   channel?: string | null;
+  contactPerson?: string | null;
+  phone?: string | null;
+  remark?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type Item = {
@@ -36,7 +41,7 @@ export type Item = {
   brand?: string | null;
   categoryId?: string;
   unit: string;
-  trackingMode: "CLOSED_LOOP" | "CONSUMABLE";
+  trackingMode: "CLOSED_LOOP" | "CONSUMABLE" | "HIGH_VALUE_CONSUMABLE" | "REPAIR_PENDING";
   safeStock: string;
   defaultSupplierId?: string | null;
   defaultPrice?: string | null;
@@ -110,6 +115,15 @@ export type PurchaseRequestItem = {
   requestedQty: string;
   reason?: string | null;
   item?: Item | null;
+  purchaseListLinks?: Array<{
+    purchaseListItem: {
+      purchaseList: {
+        id: string;
+        listNo: string;
+        status: "PENDING" | "PURCHASING" | "ARRIVED" | "COMPLETED" | "CANCELLED";
+      };
+    };
+  }>;
 };
 
 export type PurchaseRequest = {
@@ -174,12 +188,22 @@ export type PurchaseListItem = {
   }>;
 };
 
+export type CancelRequest = {
+  id: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  requestTime: string;
+  reviewedAt?: string | null;
+  reviewNote?: string | null;
+  reviewer?: { id: string; realName: string } | null;
+};
+
 export type PurchaseList = {
   id: string;
   listNo: string;
   status: "PENDING" | "PURCHASING" | "ARRIVED" | "COMPLETED" | "CANCELLED";
   remark?: string | null;
   createdAt: string;
+  cancelRequest?: CancelRequest | null;
   creator: {
     id: string;
     realName: string;
@@ -260,6 +284,20 @@ export type LossRecord = {
     id: string;
     realName: string;
   };
+};
+
+export type DeleteRequest = {
+  id: string;
+  targetType: "recovery" | "purchase_list";
+  targetId: string;
+  targetDesc: Record<string, unknown>;
+  requestedBy: string;
+  requestTime: string;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  reviewedAt?: string | null;
+  reviewNote?: string | null;
+  requester: { id: string; realName: string };
+  reviewer?: { id: string; realName: string } | null;
 };
 
 export type PaginationMeta = {

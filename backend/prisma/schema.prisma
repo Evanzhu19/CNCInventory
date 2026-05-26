@@ -18,16 +18,18 @@ model User {
   createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(0)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(0)
 
-  stockInsOperated    StockIn[]         @relation("StockInOperator")
-  stockOutsOperated   StockOut[]        @relation("StockOutOperator")
-  stockOutsReceived   StockOut[]        @relation("StockOutReceiver")
-  recoveryRecords     RecoveryRecord[]  @relation("RecoveryOperator")
-  lossRecords         LossRecord[]      @relation("LossOperator")
-  purchaseRequests    PurchaseRequest[] @relation("PurchaseRequestRequester")
-  purchaseLists       PurchaseList[]    @relation("PurchaseListCreator")
-  stockCountsCreated  StockCount[]      @relation("StockCountCreator")
-  stockCountsApproved StockCount[]      @relation("StockCountApprover")
-  operationLogs       OperationLog[]
+  stockInsOperated       StockIn[]         @relation("StockInOperator")
+  stockOutsOperated      StockOut[]        @relation("StockOutOperator")
+  stockOutsReceived      StockOut[]        @relation("StockOutReceiver")
+  recoveryRecords        RecoveryRecord[]  @relation("RecoveryOperator")
+  lossRecords            LossRecord[]      @relation("LossOperator")
+  purchaseRequests       PurchaseRequest[] @relation("PurchaseRequestRequester")
+  purchaseLists          PurchaseList[]    @relation("PurchaseListCreator")
+  stockCountsCreated     StockCount[]      @relation("StockCountCreator")
+  stockCountsApproved    StockCount[]      @relation("StockCountApprover")
+  operationLogs          OperationLog[]
+  deleteRequestsSubmitted DeleteRequest[]  @relation("DeleteRequestRequester")
+  deleteRequestsReviewed  DeleteRequest[]  @relation("DeleteRequestReviewer")
 
   @@index([role])
   @@index([status])
@@ -530,8 +532,10 @@ enum UserRole {
 }
 
 enum ItemTrackingMode {
-  CLOSED_LOOP @map("closed_loop")
-  CONSUMABLE  @map("consumable")
+  CLOSED_LOOP           @map("closed_loop")
+  CONSUMABLE            @map("consumable")
+  HIGH_VALUE_CONSUMABLE @map("high_value_consumable")
+  REPAIR_PENDING        @map("repair_pending")
 
   @@map("item_tracking_mode")
 }
@@ -626,4 +630,33 @@ enum StockCountStatus {
   VOIDED    @map("voided")
 
   @@map("stock_count_status")
+}
+
+enum DeleteRequestStatus {
+  PENDING  @map("pending")
+  APPROVED @map("approved")
+  REJECTED @map("rejected")
+
+  @@map("delete_request_status")
+}
+
+model DeleteRequest {
+  id          BigInt              @id @default(autoincrement()) @db.UnsignedBigInt
+  targetType  String              @map("target_type") @db.VarChar(50)
+  targetId    BigInt              @map("target_id") @db.UnsignedBigInt
+  targetDesc  Json                @map("target_desc")
+  requestedBy BigInt              @map("requested_by") @db.UnsignedBigInt
+  requestTime DateTime            @default(now()) @map("request_time") @db.DateTime(0)
+  status      DeleteRequestStatus @default(PENDING)
+  reviewedBy  BigInt?             @map("reviewed_by") @db.UnsignedBigInt
+  reviewedAt  DateTime?           @map("reviewed_at") @db.DateTime(0)
+  reviewNote  String?             @map("review_note") @db.VarChar(500)
+
+  requester User  @relation("DeleteRequestRequester", fields: [requestedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reviewer  User? @relation("DeleteRequestReviewer", fields: [reviewedBy], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([status])
+  @@index([requestedBy])
+  @@index([targetType, targetId])
+  @@map("delete_requests")
 }

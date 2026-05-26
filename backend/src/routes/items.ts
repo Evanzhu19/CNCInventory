@@ -35,16 +35,20 @@ function nullableText(value?: string | null) {
 router.get("/", async (req, res, next) => {
   try {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-    const where = search
-      ? {
-          OR: [
-            { itemCode: { contains: search } },
-            { name: { contains: search } },
-            { specification: { contains: search } },
-            { brand: { contains: search } },
-          ],
-        }
-      : {};
+    const categoryId = typeof req.query.categoryId === "string" ? req.query.categoryId.trim() : "";
+
+    const where: Record<string, unknown> = { status: 1 };
+    if (search) {
+      where.OR = [
+        { itemCode: { contains: search } },
+        { name: { contains: search } },
+        { specification: { contains: search } },
+        { brand: { contains: search } },
+      ];
+    }
+    if (categoryId) {
+      where.categoryId = toBigIntId(categoryId);
+    }
 
     const items = await prisma.item.findMany({
       where,
@@ -289,8 +293,7 @@ router.delete(
       await prisma.$transaction(async (tx) => {
         const item = await tx.item.findUnique({ where: { id: itemId } });
         if (!item) {
-          res.status(404).json({ message: "物品不存在" });
-          return;
+          throw new Error("物品不存在");
         }
 
         const inventory = await tx.inventory.findUnique({

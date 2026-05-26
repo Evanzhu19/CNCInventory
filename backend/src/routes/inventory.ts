@@ -10,29 +10,36 @@ import { requireRole } from "../middleware/auth.js";
 const router = Router();
 
 const inventoryAdjustSchema = z.object({
-  availableQty: z.coerce.number().min(0),
-  borrowedQty: z.coerce.number().min(0),
-  pendingQty: z.coerce.number().min(0),
+  availableQty: z.coerce.number().int().min(0),
+  borrowedQty: z.coerce.number().int().min(0),
+  pendingQty: z.coerce.number().int().min(0),
   reason: z.string().trim().min(1).max(255),
 });
 
 router.get("/list", async (req, res, next) => {
   try {
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-    const where = search
-      ? {
-          item: {
-            is: {
-              OR: [
-                { itemCode: { contains: search } },
-                { name: { contains: search } },
-                { specification: { contains: search } },
-                { brand: { contains: search } },
-              ],
+    const categoryId = typeof req.query.categoryId === "string" ? req.query.categoryId.trim() : "";
+    const where =
+      search || categoryId
+        ? {
+            item: {
+              is: {
+                ...(categoryId ? { categoryId: toBigIntId(categoryId) } : {}),
+                ...(search
+                  ? {
+                      OR: [
+                        { itemCode: { contains: search } },
+                        { name: { contains: search } },
+                        { specification: { contains: search } },
+                        { brand: { contains: search } },
+                      ],
+                    }
+                  : {}),
+              },
             },
-          },
-        }
-      : undefined;
+          }
+        : undefined;
 
     const rows = await prisma.inventory.findMany({
       where,

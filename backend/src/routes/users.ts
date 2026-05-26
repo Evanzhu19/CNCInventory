@@ -231,4 +231,21 @@ router.patch("/:id", requireRole(UserRole.ADMIN, UserRole.PROCUREMENT_MANAGER), 
   }
 });
 
+// Returns the list of users eligible to receive stock-outs (CNC_SUPERVISOR + PROCUREMENT_MANAGER)
+router.get("/receivers", async (_req, res, next) => {
+  try {
+    const data = await prisma.user.findMany({
+      where: {
+        status: 1,
+        role: { in: [UserRole.CNC_SUPERVISOR, UserRole.PROCUREMENT_MANAGER] },
+      },
+      select: { id: true, realName: true, role: true },
+      orderBy: { realName: "asc" },
+    });
+    res.json({ data });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

@@ -71,4 +71,19 @@ router.post("/", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, nex
   }
 });
 
+router.delete("/:id", requireRole(UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
+  try {
+    const id = toBigIntId(String(req.params.id));
+    const itemCount = await prisma.item.count({ where: { categoryId: id } });
+    if (itemCount > 0) {
+      res.status(409).json({ message: `该分类下还有 ${itemCount} 个物品，不能删除` });
+      return;
+    }
+    await prisma.category.delete({ where: { id } });
+    res.json({ data: { id: String(id) } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;

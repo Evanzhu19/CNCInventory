@@ -1,10 +1,10 @@
-import { AutoComplete, Button, Card, DatePicker, Form, Input, InputNumber, Popconfirm, Select, Table, Tabs, Tag, message } from "antd";
+import { AutoComplete, Button, Card, DatePicker, Form, Input, InputNumber, Popconfirm, Select, Steps, Table, Tabs, Tag, Tooltip, message } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useState } from "react";
 import { api, getErrorMessage } from "../api/client";
 import ItemPriceHistory from "../components/ItemPriceHistory";
 import { canManagePurchaseLists, isProcurementManager } from "../lib/roles";
-import type { Item, ItemDetail, PurchaseList, PurchaseListItem, PurchaseRequest, Supplier, User } from "../types";
+import type { CancelRequest, Item, ItemDetail, PurchaseList, PurchaseListItem, PurchaseRequest, Supplier, User } from "../types";
 
 type PurchaseRequestValues = {
   itemId?: string;
@@ -163,6 +163,58 @@ function priorityColor(priority: PurchaseRequest["priority"]) {
   return undefined;
 }
 
+function CancelRequestBadge({ cr }: { cr: CancelRequest }) {
+  if (cr.status === "PENDING") {
+    return (
+      <span style={{ color: "#fa8c16", fontWeight: 500 }}>
+        &#x26A0; 取消申请待审批（{dayjs(cr.requestTime).format("MM-DD HH:mm")} 提交）
+      </span>
+    );
+  }
+  if (cr.status === "APPROVED") {
+    return (
+      <span style={{ color: "#8c8c8c" }}>
+        取消申请已批准（{cr.reviewer?.realName}，{dayjs(cr.reviewedAt ?? cr.requestTime).format("MM-DD HH:mm")}）
+      </span>
+    );
+  }
+  if (cr.status === "REJECTED") {
+    return (
+      <span style={{ color: "#cf1322" }}>
+        取消申请已拒绝{cr.reviewNote ? `：${cr.reviewNote}` : ""}（{cr.reviewer?.realName}，{dayjs(cr.reviewedAt ?? cr.requestTime).format("MM-DD HH:mm")}）
+      </span>
+    );
+  }
+  return null;
+}
+
+function getLinkedListStatus(request: PurchaseRequest): PurchaseList["status"] | null {
+  if (request.status !== "MERGED") return null;
+  for (const item of request.items) {
+    const link = item.purchaseListLinks?.[0];
+    if (link) return link.purchaseListItem.purchaseList.status;
+  }
+  return null;
+}
+
+function getEffectiveStatusDisplay(request: PurchaseRequest): { label: string; color: string } {
+  if (request.status === "PENDING") return { label: "待处理", color: "gold" };
+  if (request.status === "CANCELLED") return { label: "已取消", color: "default" };
+  if (request.status === "PURCHASED") return { label: "已完成", color: "green" };
+  if (request.status === "MERGED") {
+    const listStatus = getLinkedListStatus(request);
+    switch (listStatus) {
+      case "PENDING":    return { label: "待下单", color: "orange" };
+      case "PURCHASING": return { label: "采购中", color: "blue" };
+      case "ARRIVED":    return { label: "部分到货", color: "cyan" };
+      case "COMPLETED":  return { label: "已到货", color: "green" };
+      case "CANCELLED":  return { label: "清单取消", color: "default" };
+      default:           return { label: "已汇总", color: "blue" };
+    }
+  }
+  return { label: request.status, color: "default" };
+}
+
 function requestItemLines(request: PurchaseRequest) {
   return request.items.map((item) => {
     const name = item.requestedName;
@@ -216,78 +268,83 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
   const managePurchaseLists = canManagePurchaseLists(user);
 
   const [requestDateRange, setRequestDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
-    dayjs().startOf("day"),
+    dayjs().subtract(30, "day").startOf("day"),
     dayjs().endOf("day"),
   ]);
   const [requestStatusFilter, setRequestStatusFilter] = useState<PurchaseRequest["status"] | "ALL">("ALL");
 
-  const filteredRequests = requests.filter((req) => {
-    const t = dayjs(req.requestTime);
-    const inRange = !t.isBefore(requestDateRange[0].startOf("day")) && !t.isAfter(requestDateRange[1].endOf("day"));
-    const matchesStatus = requestStatusFilter === "ALL" || req.status === requestStatusFilter;
-    return inRange && matchesStatus;
-  });
-
   const [listDateRange, setListDateRange] = useState<[dayjs.Dayjs, dayjs.Dayjs]>([
-    dayjs().startOf("day"),
+    dayjs().subtract(30, "day").startOf("day"),
     dayjs().endOf("day"),
   ]);
 
-  const filteredPurchaseLists = purchaseLists.filter((list) => {
-    const createdAt = dayjs(list.createdAt);
-    return !createdAt.isBefore(listDateRange[0].startOf("day")) && !createdAt.isAfter(listDateRange[1].endOf("day"));
-  });
-
-  const selectedList = filteredPurchaseLists.find((purchaseList) => purchaseList.id === selectedListId) ?? null;
+  const selectedList = purchaseLists.find((purchaseList) => purchaseList.id === selectedListId) ?? null;
   const supplierNameOptions = suppliers.map((supplier) => ({
     value: supplier.name,
     label: supplier.channel ? `${supplier.name} / ${supplier.channel}` : supplier.name,
   }));
 
-  async function load(preferredListId?: string) {
+  async function loadStaticData() {
     try {
-      const itemsPromise = api.get("/items");
-      const requestsPromise = api.get("/purchase-requests");
-
       if (managePurchaseLists) {
-        const [itemsRes, requestsRes, purchaseListsRes, suppliersRes] = await Promise.all([
-          itemsPromise,
-          requestsPromise,
-          api.get("/purchase-lists"),
-          api.get("/suppliers"),
-        ]);
-        const nextPurchaseLists = purchaseListsRes.data.data as PurchaseList[];
+        const [itemsRes, suppliersRes] = await Promise.all([api.get("/items"), api.get("/suppliers")]);
         setItems(itemsRes.data.data);
-        setRequests(requestsRes.data.data);
-        setPurchaseLists(nextPurchaseLists);
         setSuppliers(suppliersRes.data.data);
-        setSelectedListId((current) => {
-          const nextId = preferredListId ?? current;
-          const start = listDateRange[0].startOf("day");
-          const end = listDateRange[1].endOf("day");
-          const filtered = nextPurchaseLists.filter((list) => {
-            const createdAt = dayjs(list.createdAt);
-            return !createdAt.isBefore(start) && !createdAt.isAfter(end);
-          });
-          if (nextId && filtered.some((purchaseList) => purchaseList.id === nextId)) {
-            return nextId;
-          }
-          return filtered[0]?.id;
-        });
-        return;
+      } else {
+        const itemsRes = await api.get("/items");
+        setItems(itemsRes.data.data);
       }
+    } catch (error) {
+      messageApi.error(getErrorMessage(error));
+    }
+  }
 
-      const [itemsRes, requestsRes] = await Promise.all([itemsPromise, requestsPromise]);
-      setItems(itemsRes.data.data);
-      setRequests(requestsRes.data.data);
+  async function loadRequests(range: [dayjs.Dayjs, dayjs.Dayjs], status: string) {
+    try {
+      const params: Record<string, string> = {
+        startDate: range[0].format("YYYY-MM-DD"),
+        endDate: range[1].format("YYYY-MM-DD"),
+      };
+      if (status !== "ALL") params.status = status;
+      const res = await api.get("/purchase-requests", { params });
+      setRequests(res.data.data);
+    } catch (error) {
+      messageApi.error(getErrorMessage(error));
+    }
+  }
+
+  async function loadLists(range: [dayjs.Dayjs, dayjs.Dayjs], preferredListId?: string) {
+    if (!managePurchaseLists) return;
+    try {
+      const res = await api.get("/purchase-lists", {
+        params: {
+          startDate: range[0].format("YYYY-MM-DD"),
+          endDate: range[1].format("YYYY-MM-DD"),
+        },
+      });
+      const nextLists = res.data.data as PurchaseList[];
+      setPurchaseLists(nextLists);
+      setSelectedListId((current) => {
+        const nextId = preferredListId ?? current;
+        if (nextId && nextLists.some((l) => l.id === nextId)) return nextId;
+        return nextLists[0]?.id;
+      });
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
   }
 
   useEffect(() => {
-    void load();
+    void loadStaticData();
   }, [managePurchaseLists]);
+
+  useEffect(() => {
+    void loadRequests(requestDateRange, requestStatusFilter);
+  }, [requestDateRange, requestStatusFilter]);
+
+  useEffect(() => {
+    void loadLists(listDateRange);
+  }, [listDateRange, managePurchaseLists]);
 
   useEffect(() => {
     if (!selectedList) {
@@ -340,7 +397,7 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
     try {
       await api.delete(`/purchase-requests/${id}`);
       messageApi.success("采购申请已删除");
-      await load();
+      await loadRequests(requestDateRange, requestStatusFilter);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
@@ -367,7 +424,7 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
       messageApi.success("采购申请已提交");
       form.resetFields();
       setSelectedItemDetail(null);
-      await load();
+      await loadRequests(requestDateRange, requestStatusFilter);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
@@ -403,16 +460,17 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
       setSelectedRequestIds([]);
       setCreateListRemark("");
       setActiveTab("lists");
-      await load(res.data.data.id);
+      await Promise.all([
+        loadRequests(requestDateRange, requestStatusFilter),
+        loadLists(listDateRange, res.data.data.id),
+      ]);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
   }
 
   async function savePurchaseList() {
-    if (!selectedList) {
-      return;
-    }
+    if (!selectedList) return;
 
     try {
       await api.patch(`/purchase-lists/${selectedList.id}`, {
@@ -429,16 +487,41 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
         }),
       });
       messageApi.success("采购清单已保存");
-      await load(selectedList.id);
+      await loadLists(listDateRange, selectedList.id);
+    } catch (error) {
+      messageApi.error(getErrorMessage(error));
+    }
+  }
+
+  async function cancelPurchaseList() {
+    if (!selectedList) return;
+    try {
+      const res = await api.delete(`/purchase-lists/${selectedList.id}`);
+      messageApi.success(res.data.message ?? "操作成功");
+      await loadLists(listDateRange);
+    } catch (error) {
+      messageApi.error(getErrorMessage(error));
+    }
+  }
+
+  async function markAllOrdered() {
+    if (!selectedList) return;
+    const pendingCount = selectedList.items.filter((i) => i.status === "PENDING").length;
+    if (pendingCount === 0) {
+      messageApi.info("没有待处理的明细");
+      return;
+    }
+    try {
+      await api.post(`/purchase-lists/${selectedList.id}/mark-ordered`);
+      messageApi.success(`已将 ${pendingCount} 条明细标记为已下单`);
+      await loadLists(listDateRange, selectedList.id);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
   }
 
   async function submitPurchaseListStockIn() {
-    if (!selectedList) {
-      return;
-    }
+    if (!selectedList) return;
 
     const normalizedSupplierName = normalizeText(stockInSupplierName);
     if (!normalizedSupplierName) {
@@ -469,7 +552,7 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
         })),
       });
       messageApi.success("到货入库已提交");
-      await load(selectedList.id);
+      await loadLists(listDateRange, selectedList.id);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
     }
@@ -526,10 +609,11 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
     },
     {
       title: "状态",
-      width: 90,
-      render: (_: unknown, row: PurchaseRequest) => (
-        <Tag color={requestStatusColor(row.status)}>{purchaseRequestStatusLabels[row.status]}</Tag>
-      ),
+      width: 100,
+      render: (_: unknown, row: PurchaseRequest) => {
+        const s = getEffectiveStatusDisplay(row);
+        return <Tag color={s.color}>{s.label}</Tag>;
+      },
     },
     {
       title: "紧急",
@@ -579,6 +663,24 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
         <Tag color={purchaseListStatusColor(row.status)}>{purchaseListStatusLabels[row.status]}</Tag>
       ),
     },
+    {
+      title: "取消申请",
+      width: 90,
+      render: (_: unknown, row: PurchaseList) => {
+        const cr = row.cancelRequest;
+        if (!cr) return null;
+        if (cr.status === "PENDING") return <Tag color="orange">待审批</Tag>;
+        if (cr.status === "APPROVED") return <Tag color="default">已批准</Tag>;
+        if (cr.status === "REJECTED") {
+          return (
+            <Tooltip title={cr.reviewNote ? `拒绝原因：${cr.reviewNote}` : "已拒绝"}>
+              <Tag color="red">已拒绝</Tag>
+            </Tooltip>
+          );
+        }
+        return null;
+      },
+    },
     { title: "创建人", dataIndex: ["creator", "realName"], width: 80 },
     { title: "明细数", width: 70, render: (_: unknown, row: PurchaseList) => row.items.length },
     {
@@ -589,6 +691,8 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
     {
       title: "创建时间",
       width: 140,
+      defaultSortOrder: "descend" as const,
+      sorter: (a: PurchaseList, b: PurchaseList) => dayjs(a.createdAt).unix() - dayjs(b.createdAt).unix(),
       render: (_: unknown, row: PurchaseList) => (
         <span style={{ whiteSpace: "nowrap" }}>{formatDateTime(row.createdAt)}</span>
       ),
@@ -739,9 +843,10 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
       width: 130,
       render: (_: unknown, row: PurchaseListItem) => (
         <InputNumber
-          min={0.001}
-          max={getRemainingQty(row)}
-          precision={3}
+          min={1}
+          max={Math.floor(getRemainingQty(row))}
+          precision={0}
+          step={1}
           style={{ width: "100%" }}
           value={stockInDrafts[row.id]?.qty}
           onChange={(value) => updateStockInDraft(row.id, { qty: value ?? 0 })}
@@ -827,7 +932,7 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                         <Input />
                       </Form.Item>
                       <Form.Item label="数量" name="requestedQty" rules={[{ required: true, message: "请输入数量" }]}>
-                        <InputNumber min={0.001} precision={3} style={{ width: "100%" }} />
+                        <InputNumber min={1} precision={0} step={1} style={{ width: "100%" }} />
                       </Form.Item>
                       <Form.Item label="紧急程度" name="priority">
                         <Select
@@ -895,11 +1000,11 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                         { value: "CANCELLED", label: "已取消" },
                       ]}
                     />
-                    <span style={{ color: "#8c8c8c", fontSize: 12 }}>{`共 ${filteredRequests.length} 条`}</span>
+                    <span style={{ color: "#8c8c8c", fontSize: 12 }}>{`共 ${requests.length} 条`}</span>
                   </div>
                   <Table
                     rowKey="id"
-                    dataSource={filteredRequests}
+                    dataSource={requests}
                     size="small"
                     scroll={{ x: 700 }}
                     rowSelection={
@@ -931,28 +1036,22 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                           <DatePicker.RangePicker
                             value={listDateRange}
                             onChange={(range) => {
-                              const next: [dayjs.Dayjs, dayjs.Dayjs] = range
-                                ? [range[0] ?? dayjs().startOf("day"), range[1] ?? dayjs().endOf("day")]
-                                : [dayjs().startOf("day"), dayjs().endOf("day")];
-                              setListDateRange(next);
-                              const start = next[0].startOf("day");
-                              const end = next[1].endOf("day");
-                              const filtered = purchaseLists.filter((list) => {
-                                const createdAt = dayjs(list.createdAt);
-                                return !createdAt.isBefore(start) && !createdAt.isAfter(end);
-                              });
-                              setSelectedListId(filtered[0]?.id);
+                              setListDateRange(
+                                range
+                                  ? [range[0] ?? dayjs().startOf("day"), range[1] ?? dayjs().endOf("day")]
+                                  : [dayjs().startOf("day"), dayjs().endOf("day")],
+                              );
                             }}
                             allowClear={false}
                           />
                           <span style={{ color: "#8c8c8c", fontSize: 12 }}>
-                            {`共 ${filteredPurchaseLists.length} 条`}
+                            {`共 ${purchaseLists.length} 条`}
                           </span>
                         </div>
                         <Table
                           rowKey="id"
                           size="small"
-                          dataSource={filteredPurchaseLists}
+                          dataSource={purchaseLists}
                           pagination={false}
                           columns={purchaseListColumns}
                           rowClassName={(row) => (row.id === selectedListId ? "ant-table-row-selected" : "")}
@@ -966,14 +1065,37 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                       {selectedList && (
                         <>
                           <Card title={`清单详情 · ${selectedList.listNo}`}>
-                            <div className="toolbar">
+                            <div className="toolbar" style={{ marginBottom: 16 }}>
                               <Tag color={purchaseListStatusColor(selectedList.status)}>
                                 {purchaseListStatusLabels[selectedList.status]}
                               </Tag>
                               <span>{`创建人：${selectedList.creator.realName}`}</span>
                               <span>{`创建时间：${formatDateTime(selectedList.createdAt)}`}</span>
-                              <span>{`已入库次数：${selectedList.stockIns.length}`}</span>
+                              {selectedList.stockIns.length > 0 && (
+                                <span style={{ color: "#52c41a" }}>{`已入库 ${selectedList.stockIns.length} 次`}</span>
+                              )}
+                              {selectedList.cancelRequest && (
+                                <CancelRequestBadge cr={selectedList.cancelRequest} />
+                              )}
                             </div>
+                            <Steps
+                              size="small"
+                              current={
+                                selectedList.status === "CANCELLED" ? -1 :
+                                selectedList.status === "COMPLETED" ? 4 :
+                                selectedList.status === "ARRIVED" ? 2 :
+                                selectedList.status === "PURCHASING" ? 2 :
+                                1
+                              }
+                              status={selectedList.status === "CANCELLED" ? "error" : undefined}
+                              style={{ marginBottom: 20 }}
+                              items={[
+                                { title: "已汇总", description: "清单已创建" },
+                                { title: "标记下单", description: "一键标记全部已下单" },
+                                { title: "到货入库", description: selectedList.status === "ARRIVED" ? "部分已入库" : "执行入库操作" },
+                                { title: "全部完成" },
+                              ]}
+                            />
                             <Table
                               rowKey="id"
                               size="small"
@@ -991,13 +1113,61 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                               />
                             </div>
                             <div className="toolbar" style={{ marginTop: 16 }}>
-                              <Button type="primary" onClick={savePurchaseList}>
-                                保存采购清单
+                              <Button onClick={savePurchaseList}>
+                                保存参考信息
                               </Button>
+                              {selectedList.status === "PENDING" && (
+                                <Popconfirm
+                                  title="批量标记已下单"
+                                  description={`将所有待处理 (${selectedList.items.filter((i) => i.status === "PENDING").length} 条) 明细标记为已下单？`}
+                                  okText="确认"
+                                  cancelText="取消"
+                                  onConfirm={() => void markAllOrdered()}
+                                >
+                                  <Button type="primary">
+                                    一键标记已下单
+                                  </Button>
+                                </Popconfirm>
+                              )}
+                              {(selectedList.status === "PURCHASING" || selectedList.status === "ARRIVED") && (
+                                <Tag color="blue" style={{ padding: "4px 12px", fontSize: 13 }}>
+                                  ↓ 已下单，请在下方执行到货入库
+                                </Tag>
+                              )}
+                              {selectedList.status === "COMPLETED" && (
+                                <Tag color="green" style={{ padding: "4px 12px", fontSize: 13 }}>
+                                  全部入库完成
+                                </Tag>
+                              )}
+                              {selectedList.status !== "CANCELLED" && (
+                                <Popconfirm
+                                  title={selectedList.status === "PENDING" ? "取消采购清单" : "申请取消采购清单"}
+                                  description={
+                                    selectedList.status === "PENDING"
+                                      ? "将直接取消该清单，并将关联采购申请恢复为待处理状态。确认？"
+                                      : "该清单已在处理中，将提交总经理审批，批准后执行取消。确认提交？"
+                                  }
+                                  okText={selectedList.status === "PENDING" ? "取消清单" : "提交申请"}
+                                  okButtonProps={{ danger: true }}
+                                  cancelText="不操作"
+                                  onConfirm={() => void cancelPurchaseList()}
+                                >
+                                  <Button danger>
+                                    {selectedList.status === "PENDING" ? "取消清单" : "申请取消"}
+                                  </Button>
+                                </Popconfirm>
+                              )}
                             </div>
                           </Card>
 
-                          <Card title="到货入库">
+                          <Card
+                            title="到货入库"
+                            headStyle={
+                              selectedList.status === "PURCHASING" || selectedList.status === "ARRIVED"
+                                ? { backgroundColor: "#e6f4ff", borderBottom: "2px solid #1677ff" }
+                                : undefined
+                            }
+                          >
                             {stockInCandidateItems.length ? (
                               <>
                                 <div className="toolbar">

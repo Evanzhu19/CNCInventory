@@ -21,7 +21,7 @@ const purchaseRequestSchema = z.object({
         requestedSpecification: z.string().max(200).optional().nullable(),
         requestedBrand: z.string().max(100).optional().nullable(),
         requestedUnit: z.string().max(20).optional().nullable(),
-        requestedQty: z.coerce.number().positive(),
+        requestedQty: z.coerce.number().int().positive(),
         reason: z.string().max(255).optional().nullable(),
       }),
     )
@@ -36,16 +36,48 @@ const purchaseRequestSchema = z.object({
   }
 });
 
+const dateRangeQuerySchema = z.object({
+  startDate: z.string().optional(),
+  endDate: z.string().optional(),
+  status: z.enum(["PENDING", "MERGED", "PURCHASED", "CANCELLED"]).optional(),
+});
+
 router.get("/", requireRole(UserRole.CNC_SUPERVISOR, UserRole.PROCUREMENT_MANAGER), async (req, res, next) => {
   try {
-    const where = isProcurementManager(req.user) ? {} : { requesterId: req.user!.id };
+    const { startDate, endDate, status } = dateRangeQuerySchema.parse(req.query);
+    const baseWhere = isProcurementManager(req.user) ? {} : { requesterId: req.user!.id };
+    const where = {
+      ...baseWhere,
+      ...(status ? { status } : {}),
+      ...(startDate || endDate ? {
+        requestTime: {
+          ...(startDate ? { gte: new Date(`${startDate}T00:00:00.000`) } : {}),
+          ...(endDate ? { lte: new Date(`${endDate}T23:59:59.999`) } : {}),
+        },
+      } : {}),
+    };
     const data = await prisma.purchaseRequest.findMany({
       where,
-      take: 100,
       orderBy: { requestTime: "desc" },
       include: {
         requester: { select: { id: true, realName: true } },
-        items: { include: { item: true } },
+        items: {
+          include: {
+            item: true,
+            purchaseListLinks: {
+              take: 1,
+              include: {
+                purchaseListItem: {
+                  include: {
+                    purchaseList: {
+                      select: { id: true, listNo: true, status: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     });
 
@@ -124,12 +156,25 @@ router.delete(
           throw new Error("只能删除待处理状态的采购申请");
         }
 
-        const mergedCount = await tx.purchaseListRequestItem.count({
-          where: { purchaseRequestItemId: { in: existing.items.map((i) => i.id) } },
+        // Safety check: block deletion if any linked purchase list is still active.
+        // Under normal flow the cancel path deletes junction rows; these only exist if cancel was incomplete.
+        const itemIds = existing.items.map((i) => i.id);
+        const links = await tx.purchaseListRequestItem.findMany({
+          where: { purchaseRequestItemId: { in: itemIds } },
+          select: { purchaseListItem: { select: { purchaseListId: true } } },
         });
-
-        if (mergedCount > 0) {
-          throw new Error("采购申请已被汇总到采购清单，无法删除");
+        if (links.length > 0) {
+          const linkedListIds = [...new Set(links.map((l) => l.purchaseListItem.purchaseListId))];
+          const linkedLists = await tx.purchaseList.findMany({
+            where: { id: { in: linkedListIds } },
+            select: { id: true, status: true },
+          });
+          if (linkedLists.some((l) => l.status !== "CANCELLED")) {
+            throw new Error("采购申请已被汇总到采购清单，无法删除");
+          }
+          await tx.purchaseListRequestItem.deleteMany({
+            where: { purchaseRequestItemId: { in: itemIds } },
+          });
         }
 
         await tx.purchaseRequestItem.deleteMany({ where: { purchaseRequestId: requestId } });
