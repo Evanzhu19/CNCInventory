@@ -6,14 +6,17 @@ import ItemPriceHistory from "../components/ItemPriceHistory";
 import { canManagePurchaseLists, isProcurementManager } from "../lib/roles";
 import type { CancelRequest, Item, ItemDetail, PurchaseList, PurchaseListItem, PurchaseRequest, Supplier, User } from "../types";
 
-type PurchaseRequestValues = {
+type PurchaseRequestItemRow = {
   itemId?: string;
   requestedName: string;
   requestedSpecification?: string;
   requestedQty: number;
   priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
   reason?: string;
-  remark?: string;
+};
+
+type PurchaseRequestValues = {
+  items: PurchaseRequestItemRow[];
 };
 
 type PurchaseRequestsPageProps = {
@@ -250,6 +253,7 @@ function purchaseListStockIns(item: PurchaseListItem) {
 export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps) {
   const [form] = Form.useForm<PurchaseRequestValues>();
   const [messageApi, contextHolder] = message.useMessage();
+  const [submitting, setSubmitting] = useState(false);
   const [activeTab, setActiveTab] = useState("requests");
   const [items, setItems] = useState<Item[]>([]);
   const [requests, setRequests] = useState<PurchaseRequest[]>([]);
@@ -404,29 +408,37 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
   }
 
   async function submit(values: PurchaseRequestValues) {
+    setSubmitting(true);
     try {
-      const selectedItem = items.find((item) => item.id === values.itemId);
-      await api.post("/purchase-requests", {
-        priority: values.priority,
-        remark: values.remark,
-        items: [
-          {
-            itemId: values.itemId,
-            requestedName: values.requestedName || selectedItem?.name,
-            requestedSpecification: values.requestedSpecification || selectedItem?.specification,
-            requestedBrand: selectedItem?.brand,
-            requestedUnit: selectedItem?.unit,
-            requestedQty: values.requestedQty,
-            reason: values.reason,
-          },
-        ],
-      });
-      messageApi.success("采购申请已提交");
+      for (const row of values.items) {
+        const selectedItem = items.find((item) => item.id === row.itemId);
+        await api.post("/purchase-requests", {
+          priority: row.priority,
+          items: [
+            {
+              itemId: row.itemId,
+              requestedName: row.requestedName || selectedItem?.name,
+              requestedSpecification: row.requestedSpecification || selectedItem?.specification,
+              requestedBrand: selectedItem?.brand,
+              requestedUnit: selectedItem?.unit,
+              requestedQty: row.requestedQty,
+              reason: row.reason,
+            },
+          ],
+        });
+      }
+      messageApi.success(
+        values.items.length > 1
+          ? `已提交 ${values.items.length} 条采购申请`
+          : "采购申请已提交",
+      );
       form.resetFields();
       setSelectedItemDetail(null);
       await loadRequests(requestDateRange, requestStatusFilter);
     } catch (error) {
       messageApi.error(getErrorMessage(error));
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -906,52 +918,84 @@ export default function PurchaseRequestsPage({ user }: PurchaseRequestsPageProps
                     form={form}
                     layout="vertical"
                     onFinish={submit}
-                    initialValues={{ priority: "MEDIUM", requestedQty: 1 }}
+                    initialValues={{ items: [{ priority: "MEDIUM", requestedQty: 1 }] }}
                   >
-                    <div className="form-row">
-                      <Form.Item label="关联库存物品" name="itemId">
-                        <Select
-                          allowClear
-                          showSearch
-                          optionFilterProp="label"
-                          options={itemOptions}
-                          onChange={(itemId) => {
-                            const item = items.find((row) => row.id === itemId);
-                            form.setFieldsValue({
-                              requestedName: item?.name,
-                              requestedSpecification: item?.specification ?? undefined,
-                            });
-                            void loadItemDetail(itemId);
-                          }}
-                        />
-                      </Form.Item>
-                      <Form.Item label="申请名称" name="requestedName" rules={[{ required: true, message: "请输入申请名称" }]}>
-                        <Input />
-                      </Form.Item>
-                      <Form.Item label="规格" name="requestedSpecification">
-                        <Input />
-                      </Form.Item>
-                      <Form.Item label="数量" name="requestedQty" rules={[{ required: true, message: "请输入数量" }]}>
-                        <InputNumber min={1} precision={0} step={1} style={{ width: "100%" }} />
-                      </Form.Item>
-                      <Form.Item label="紧急程度" name="priority">
-                        <Select
-                          options={[
-                            { value: "LOW", label: "低" },
-                            { value: "MEDIUM", label: "中" },
-                            { value: "HIGH", label: "高" },
-                            { value: "URGENT", label: "紧急" },
-                          ]}
-                        />
-                      </Form.Item>
-                      <Form.Item label="申请原因" name="reason">
-                        <Input />
-                      </Form.Item>
+                    {/* 列表头 */}
+                    <div style={{ display: "grid", gridTemplateColumns: "190px 150px 120px 70px 90px 1fr 32px", gap: 8, marginBottom: 4, padding: "0 2px", fontSize: 12, color: "#8c8c8c", fontWeight: 500 }}>
+                      <span>关联库存物品（选填）</span>
+                      <span>申请名称 *</span>
+                      <span>规格</span>
+                      <span>数量 *</span>
+                      <span>紧急程度</span>
+                      <span>申请原因</span>
+                      <span />
                     </div>
-                    <Form.Item label="备注" name="remark">
-                      <Input.TextArea rows={2} />
-                    </Form.Item>
-                    <Button type="primary" htmlType="submit">
+
+                    <Form.List name="items">
+                      {(fields, { add, remove }) => (
+                        <>
+                          {fields.map((field) => (
+                            <div key={field.key} style={{ display: "grid", gridTemplateColumns: "190px 150px 120px 70px 90px 1fr 32px", gap: 8, marginBottom: 8, alignItems: "flex-start" }}>
+                              <Form.Item name={[field.name, "itemId"]} style={{ margin: 0 }}>
+                                <Select
+                                  allowClear
+                                  showSearch
+                                  optionFilterProp="label"
+                                  options={itemOptions}
+                                  placeholder="搜索物品"
+                                  onChange={(itemId) => {
+                                    const item = items.find((row) => row.id === itemId);
+                                    form.setFieldValue(["items", field.name, "requestedName"], item?.name ?? "");
+                                    form.setFieldValue(["items", field.name, "requestedSpecification"], item?.specification ?? "");
+                                    void loadItemDetail(itemId);
+                                  }}
+                                />
+                              </Form.Item>
+                              <Form.Item name={[field.name, "requestedName"]} style={{ margin: 0 }} rules={[{ required: true, message: "请填写" }]}>
+                                <Input placeholder="名称" />
+                              </Form.Item>
+                              <Form.Item name={[field.name, "requestedSpecification"]} style={{ margin: 0 }}>
+                                <Input placeholder="规格" />
+                              </Form.Item>
+                              <Form.Item name={[field.name, "requestedQty"]} style={{ margin: 0 }} rules={[{ required: true, message: "请填写" }]}>
+                                <InputNumber min={1} precision={0} step={1} style={{ width: "100%" }} />
+                              </Form.Item>
+                              <Form.Item name={[field.name, "priority"]} style={{ margin: 0 }}>
+                                <Select
+                                  options={[
+                                    { value: "LOW", label: "低" },
+                                    { value: "MEDIUM", label: "中" },
+                                    { value: "HIGH", label: "高" },
+                                    { value: "URGENT", label: "紧急" },
+                                  ]}
+                                />
+                              </Form.Item>
+                              <Form.Item name={[field.name, "reason"]} style={{ margin: 0 }}>
+                                <Input placeholder="原因（选填）" />
+                              </Form.Item>
+                              <Button
+                                type="text"
+                                danger
+                                disabled={fields.length === 1}
+                                onClick={() => remove(field.name)}
+                                style={{ padding: "4px 8px", marginTop: 1 }}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          ))}
+                          <Button
+                            type="dashed"
+                            onClick={() => add({ priority: "MEDIUM", requestedQty: 1 })}
+                            style={{ marginBottom: 16 }}
+                          >
+                            + 添加物品
+                          </Button>
+                        </>
+                      )}
+                    </Form.List>
+
+                    <Button type="primary" htmlType="submit" loading={submitting}>
                       提交申请
                     </Button>
                   </Form>

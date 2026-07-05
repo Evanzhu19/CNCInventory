@@ -2,6 +2,8 @@ import { Button, Drawer, Input, InputNumber, Modal, Popconfirm, Select, Switch, 
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { api, getErrorMessage } from "../api/client";
+import { isCncSupervisor } from "../lib/roles";
+import type { User } from "../types";
 
 type ItemForSelection = {
   id: string;
@@ -70,7 +72,12 @@ function DiffCell({ diff }: { diff: number }) {
   return <span style={{ color: diffColor(diff) }}>{diff > 0 ? `+${diff}` : diff}</span>;
 }
 
-export default function StockCountsPage() {
+type StockCountsPageProps = {
+  user: User | null;
+};
+
+export default function StockCountsPage({ user }: StockCountsPageProps) {
+  const cncMode = isCncSupervisor(user);
   const [messageApi, contextHolder] = message.useMessage();
   const [counts, setCounts] = useState<StockCount[]>([]);
 
@@ -204,8 +211,8 @@ export default function StockCountsPage() {
   async function confirmCount() {
     if (!activeCount) return;
     try {
-      await api.post(`/stock-counts/${activeCount.id}/confirm`);
-      messageApi.success("盘点已确认，库存已调整");
+      const res = await api.post(`/stock-counts/${activeCount.id}/confirm`);
+      messageApi.success(res.data?.message ?? "盘点已确认");
       setDrawerOpen(false);
       await load();
     } catch (error) {
@@ -419,7 +426,11 @@ export default function StockCountsPage() {
               <Button loading={saving} onClick={() => void saveCount()}>保存</Button>
               <Popconfirm
                 title="确认盘点"
-                description="确认后将根据实际数量调整库存，操作不可逆，请确认数据无误。"
+                description={
+                  cncMode
+                    ? "确认后，盘盈将自动生成入库单，盘亏将自动生成出库单，操作不可逆，请确认数据无误。"
+                    : "确认后将根据实际数量调整库存，操作不可逆，请确认数据无误。"
+                }
                 okText="确认盘点"
                 cancelText="取消"
                 onConfirm={() => void confirmCount()}
@@ -504,37 +515,42 @@ export default function StockCountsPage() {
               align: "right" as const,
               render: (_: unknown, row: StockCountItem) => <DiffCell diff={liveDiff(row, "available")} />,
             },
-            {
-              title: "系统在外",
-              dataIndex: "systemBorrowedQty",
-              width: 80,
-              align: "right" as const,
-              render: (v: string) => Math.round(Number(v)),
-            },
-            {
-              title: "实际在外",
-              width: 100,
-              render: (_: unknown, row: StockCountItem) =>
-                isDraft ? (
-                  <InputNumber
-                    size="small"
-                    min={0}
-                    precision={0}
-                    step={1}
-                    style={{ width: 80 }}
-                    value={draftValues[row.id]?.actualBorrowedQty ?? Math.round(Number(row.actualBorrowedQty))}
-                    onChange={(v) => updateDraft(row.id, { actualBorrowedQty: v ?? 0 })}
-                  />
-                ) : (
-                  Math.round(Number(row.actualBorrowedQty))
-                ),
-            },
-            {
-              title: "在外差",
-              width: 70,
-              align: "right" as const,
-              render: (_: unknown, row: StockCountItem) => <DiffCell diff={liveDiff(row, "borrowed")} />,
-            },
+            // CNC主管盘点只调整可用数量，在外数量不展示编辑列
+            ...(cncMode
+              ? []
+              : [
+                  {
+                    title: "系统在外",
+                    dataIndex: "systemBorrowedQty",
+                    width: 80,
+                    align: "right" as const,
+                    render: (v: string) => Math.round(Number(v)),
+                  },
+                  {
+                    title: "实际在外",
+                    width: 100,
+                    render: (_: unknown, row: StockCountItem) =>
+                      isDraft ? (
+                        <InputNumber
+                          size="small"
+                          min={0}
+                          precision={0}
+                          step={1}
+                          style={{ width: 80 }}
+                          value={draftValues[row.id]?.actualBorrowedQty ?? Math.round(Number(row.actualBorrowedQty))}
+                          onChange={(v) => updateDraft(row.id, { actualBorrowedQty: v ?? 0 })}
+                        />
+                      ) : (
+                        Math.round(Number(row.actualBorrowedQty))
+                      ),
+                  },
+                  {
+                    title: "在外差",
+                    width: 70,
+                    align: "right" as const,
+                    render: (_: unknown, row: StockCountItem) => <DiffCell diff={liveDiff(row, "borrowed")} />,
+                  },
+                ]),
             {
               title: "备注说明",
               render: (_: unknown, row: StockCountItem) =>

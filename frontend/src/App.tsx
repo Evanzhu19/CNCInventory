@@ -97,7 +97,7 @@ export default function App() {
       case "suppliers":
         return <SuppliersPage />;
       case "stockCounts":
-        return <StockCountsPage />;
+        return <StockCountsPage user={user} />;
       case "operationLogs":
         return <OperationLogsPage />;
       default:
@@ -162,7 +162,7 @@ export default function App() {
     ...(canAccessAnalytics(user) ? [{ key: "analysis", icon: <BarChartOutlined />, label: "统计分析" }] : []),
     ...(canManageUsers(user) ? [{ key: "users", icon: <TeamOutlined />, label: "用户管理" }] : []),
     ...((isProcurementManager(user) || isAdmin(user)) ? [{ key: "suppliers", icon: <ShopOutlined />, label: "供应商" }] : []),
-    ...(isProcurementManager(user) ? [{ key: "stockCounts", icon: <FileSearchOutlined />, label: "库存盘点" }] : []),
+    ...((isProcurementManager(user) || isCncSupervisor(user)) ? [{ key: "stockCounts", icon: <FileSearchOutlined />, label: "库存盘点" }] : []),
     ...((isProcurementManager(user) || isAdmin(user)) ? [{ key: "operationLogs", icon: <AuditOutlined />, label: "操作日志" }] : []),
     ...((isGeneralManager(user) || isAdmin(user)) ? [{ key: "approvals", icon: <CheckCircleOutlined />, label: "审批管理" }] : []),
   ];
