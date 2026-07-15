@@ -71,10 +71,14 @@ services:
       context: ./frontend
       args:
         VITE_API_BASE_URL: /api
+        VITE_BASE: /tools/
     container_name: mills-inventory-frontend
     restart: unless-stopped
     ports:
       - "${FRONTEND_BIND_ADDRESS:-0.0.0.0}:${FRONTEND_PORT:-5173}:80"
+    networks:
+      - default
+      - factory-net
     depends_on:
       backend:
         condition: service_healthy
@@ -99,3 +103,9 @@ services:
 
 volumes:
   mysql_data:
+
+# 与订单ERP共享的网络（网关按容器名 cnc-erp 反代 /erp）
+# 首次使用前先执行一次：docker network create factory-net
+networks:
+  factory-net:
+    external: true

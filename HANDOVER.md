@@ -4,9 +4,24 @@
 
 CNC 部门刀具及杂项库存与采购管理系统，运行于内网 PVE/CT 环境（Docker Compose）。
 
-- **访问地址**：http://192.168.101.241:5173
+- **访问地址**：http://192.168.101.241/tools/（统一门户 http://192.168.101.241/ 选「刀具库房管理」）
 - **CT 地址**：192.168.101.241
 - **数据库**：MySQL 8.4，持久化在 Docker volume `mysql_data`
+
+## 统一门户（2026-07 起）
+
+本项目的 frontend 容器（nginx）同时承担全厂 80 端口网关：
+
+| 路径 | 内容 |
+|------|------|
+| `/` | 门户首页（frontend/portal/index.html，选择进哪个系统） |
+| `/tools/` | 本系统 SPA（Vite base=/tools/，Docker 构建参数 VITE_BASE） |
+| `/api/` | 本系统后端（backend:4000，不变） |
+| `/erp/` | 订单生产 ERP（反代到 cnc-erp:3000，经共享网络 factory-net） |
+
+部署前提：`docker network create factory-net`（一次性），且 CNC-ERP 项目的容器也加入了该网络。
+ERP 容器不在线时网关照常启动（nginx 用运行时 DNS），访问 /erp/ 会 502，其余不受影响。
+两系统数据库完全独立，门户融合不涉及任何数据迁移。
 
 ---
 

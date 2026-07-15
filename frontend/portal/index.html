@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>瑞宏智能 · 管理系统门户</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(160deg, #1a2740 0%, #0f1826 100%);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #e8edf5; padding: 24px;
+    }
+    h1 { font-size: 30px; letter-spacing: 4px; margin-bottom: 8px; text-align: center; }
+    .sub { color: #7d8aa5; font-size: 14px; margin-bottom: 48px; letter-spacing: 2px; }
+    .cards { display: flex; gap: 32px; flex-wrap: wrap; justify-content: center; }
+    a.card {
+      display: block; width: 300px; padding: 36px 32px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 14px; text-decoration: none; color: #e8edf5;
+      transition: transform 0.15s, background 0.15s, border-color 0.15s;
+    }
+    a.card:hover { transform: translateY(-4px); background: rgba(255, 255, 255, 0.1); border-color: #4a90d9; }
+    .icon { font-size: 42px; margin-bottom: 14px; }
+    .card h2 { font-size: 21px; margin-bottom: 10px; }
+    .card p { color: #93a1bb; font-size: 13.5px; line-height: 1.7; }
+    .enter { margin-top: 18px; color: #5aa2e8; font-size: 14px; }
+    footer { margin-top: 56px; color: #55617a; font-size: 12px; }
+    @media (max-width: 720px) { .cards { flex-direction: column; } a.card { width: 100%; max-width: 340px; } }
+  </style>
+</head>
+<body>
+  <h1>东莞市瑞宏智能科技有限公司</h1>
+  <div class="sub">RUIHONG CNC · 内部管理系统</div>
+  <div class="cards">
+    <a class="card" href="/erp/">
+      <div class="icon">📋</div>
+      <h2>订单生产 ERP</h2>
+      <p>订单录入 · 板件追踪 · 报工 · 外发管理 · 出货送货单 · 双证录入</p>
+      <div class="enter">进入系统 →</div>
+    </a>
+    <a class="card" href="/tools/">
+      <div class="icon">🔧</div>
+      <h2>刀具库房管理</h2>
+      <p>刀具出入库 · 库存盘点 · 回收损耗 · 采购申请 · 统计分析</p>
+      <div class="enter">进入系统 →</div>
+    </a>
+  </div>
+  <footer>局域网内部系统 · 请勿外传访问地址</footer>
+</body>
+</html>
