@@ -46,8 +46,13 @@ services:
       JWT_SECRET: ${JWT_SECRET:?Please set JWT_SECRET in .env}
       CORS_ORIGIN: ${APP_PUBLIC_URL:-http://localhost:5173}
       BCRYPT_SALT_ROUNDS: ${BCRYPT_SALT_ROUNDS:-10}
+      # 统一登录：ERP 认证中心（factory-net 网络内的容器名）
+      ERP_BASE_URL: ${ERP_BASE_URL:-http://cnc-erp:3000}
     expose:
       - "4000"
+    networks:
+      - default
+      - factory-net
     depends_on:
       mysql:
         condition: service_healthy

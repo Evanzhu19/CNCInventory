@@ -8,6 +8,8 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(16),
   CORS_ORIGIN: z.string().default("http://localhost:5173"),
   BCRYPT_SALT_ROUNDS: z.coerce.number().int().min(4).max(14).default(10),
+  // 统一登录：ERP 认证中心地址（factory-net 网络内按容器名访问）
+  ERP_BASE_URL: z.string().default("http://cnc-erp:3000"),
 });
 
 export const env = envSchema.parse(process.env);
